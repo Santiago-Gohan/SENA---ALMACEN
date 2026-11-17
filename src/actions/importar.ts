@@ -3,7 +3,7 @@
 import { createHash } from 'crypto';
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
-import { db, mensajeError } from '@/lib/supabase';
+import { ejecutar, insertarLote, mensajeError, q, uno } from '@/lib/db';
 import { requireAdmin } from '@/lib/auth';
 import {
   normalizarFecha,
@@ -138,6 +138,68 @@ function fechaHora(fecha: string | null, hora: string | null): string | null {
   return `${fecha}T${hora}${OFFSET}`;
 }
 
+/**
+ * Actualiza varias filas de la bandeja en una sola sentencia
+ * (update ... from values) para no hacer una consulta por fila.
+ */
+async function actualizarFilasPlanilla(
+  filas: Record<string, any>[],
+  columnas: string[],
+  tipos: string[]
+): Promise<void> {
+  const LOTE = 200;
+
+  for (let i = 0; i < filas.length; i += LOTE) {
+    const lote = filas.slice(i, i + LOTE);
+    const valores: any[] = [];
+    const grupos: string[] = [];
+    let n = 1;
+
+    for (const fila of lote) {
+      const marcas = [`$${n++}::bigint`];
+      valores.push(fila.id);
+      for (let c = 0; c < columnas.length; c++) {
+        marcas.push(`$${n++}::${tipos[c]}`);
+        valores.push(fila[columnas[c]] ?? null);
+      }
+      grupos.push(`(${marcas.join(', ')})`);
+    }
+
+    const sets = columnas.map((c) => `${c} = v.${c}`).join(', ');
+    await q(
+      `update stg_planilla_papel as s
+          set ${sets}
+         from (values ${grupos.join(', ')}) as v(id, ${columnas.join(', ')})
+        where s.id = v.id`,
+      valores
+    );
+  }
+}
+
+const COLS_CONCILIACION = [
+  'fecha_norm',
+  'hora_entrada_norm',
+  'hora_salida_norm',
+  'ficha_id',
+  'programa_id',
+  'ambiente_id',
+  'instructor_id',
+  'estado_validacion',
+  'hash_fila',
+];
+
+const TIPOS_CONCILIACION = [
+  'date',
+  'timestamptz',
+  'timestamptz',
+  'int',
+  'int',
+  'int',
+  'uuid',
+  'text',
+  'text',
+];
+
 /* ------------------------------ Carga ------------------------------ */
 
 export async function cargarPlanilla(formData: FormData): Promise<void> {
@@ -156,7 +218,6 @@ export async function cargarPlanilla(formData: FormData): Promise<void> {
   let error = '';
 
   try {
-    const sb = db();
     const filas = parseTabla(datos);
     if (!filas.length) throw new Error('No se encontraron filas en el texto');
 
@@ -204,8 +265,7 @@ export async function cargarPlanilla(formData: FormData): Promise<void> {
 
     for (let i = 0; i < registros.length; i += 200) {
       const lote = registros.slice(i, i + 200);
-      const { error: err } = await sb.from('stg_planilla_papel').insert(lote);
-      if (err) throw new Error(err.message);
+      await insertarLote('stg_planilla_papel', lote);
       insertadas += lote.length;
     }
   } catch (e) {
@@ -227,46 +287,40 @@ export async function conciliarPlanilla(): Promise<void> {
   let error = '';
 
   try {
-    const sb = db();
+    const filas = await q<any>(
+      `select * from stg_planilla_papel
+        where estado_validacion = any($1)
+        order by id
+        limit 1000`,
+      [
+        [
+          'pendiente',
+          'fecha_invalida',
+          'hora_invalida',
+          'instructor_no_encontrado',
+          'ficha_no_encontrada',
+          'programa_no_coincide',
+          'ambiente_no_encontrado',
+        ],
+      ]
+    );
 
-    const { data: filas, error: err } = await sb
-      .from('stg_planilla_papel')
-      .select('*')
-      .in('estado_validacion', [
-        'pendiente',
-        'fecha_invalida',
-        'hora_invalida',
-        'instructor_no_encontrado',
-        'ficha_no_encontrada',
-        'programa_no_coincide',
-        'ambiente_no_encontrado',
-      ])
-      .order('id')
-      .limit(1000);
-
-    if (err) throw new Error(err.message);
-    if (!filas || !filas.length) {
+    if (!filas.length) {
       redirect('/importar?ok=' + encodeURIComponent('No hay filas pendientes por conciliar'));
     }
 
-    const [{ data: fichas }, { data: programas }, { data: ambientes }, { data: personas }] =
-      await Promise.all([
-        sb.from('ficha').select('id, codigo, programa_id, activa'),
-        sb.from('programa').select('id, codigo, nombre'),
-        sb.from('ambiente').select('id, codigo, nombre'),
-        sb.from('persona').select('id, nombres, apellidos'),
-      ]);
-
-    const listaFichas = fichas || [];
-    const listaProgramas = programas || [];
-    const listaAmbientes = ambientes || [];
-    const listaPersonas = personas || [];
+    const [listaFichas, listaProgramas, listaAmbientes, listaPersonas] = await Promise.all([
+      q<any>('select id, codigo, programa_id, activa from ficha'),
+      q<any>('select id, codigo, nombre from programa'),
+      q<any>('select id, codigo, nombre from ambiente'),
+      q<any>('select id, nombres, apellidos from persona'),
+    ]);
 
     // Crear instructores que no existan (una sola vez por nombre)
     const nuevas = new Map<string, string>();
     const actualizadas: any[] = [];
 
-    for (const fila of filas as any[]) {
+    for (const fila of filas) {
       const fecha = fila.fecha_norm ?? normalizarFecha(fila.fecha_raw);
       const entrada = normalizarHora(fila.hora_entrada_raw);
       const salida = normalizarHora(fila.hora_salida_raw);
@@ -282,7 +336,7 @@ export async function conciliarPlanilla(): Promise<void> {
       if (!entrada) estado = estado === 'listo' ? 'hora_invalida' : estado;
 
       if (estado === 'listo') {
-        const ficha = listaFichas.find((f: any) => f.codigo === fichaCodigo);
+        const ficha = listaFichas.find((f) => f.codigo === fichaCodigo);
         if (!ficha) {
           estado = 'ficha_no_encontrada';
         } else {
@@ -322,13 +376,13 @@ export async function conciliarPlanilla(): Promise<void> {
 
             if (!instructorId) {
               const partes = partesNombre(nombre);
-              const { data: creada, error: errP } = await sb
-                .from('persona')
-                .insert({ ...partes, tipo_persona: 'instructor' })
-                .select('id')
-                .single();
+              const creada = await uno<{ id: string }>(
+                `insert into persona (nombres, apellidos, tipo_persona)
+                 values ($1, $2, 'instructor') returning id`,
+                [partes.nombres, partes.apellidos]
+              );
 
-              if (errP || !creada) {
+              if (!creada) {
                 estado = 'instructor_no_encontrado';
               } else {
                 instructorId = creada.id;
@@ -343,7 +397,7 @@ export async function conciliarPlanilla(): Promise<void> {
       resumen[estado] = (resumen[estado] || 0) + 1;
 
       actualizadas.push({
-        ...fila,
+        id: fila.id,
         fecha_norm: fecha,
         hora_entrada_norm: fechaHora(fecha, entrada),
         hora_salida_norm: fechaHora(fecha, salida),
@@ -356,13 +410,7 @@ export async function conciliarPlanilla(): Promise<void> {
       });
     }
 
-    for (let i = 0; i < actualizadas.length; i += 200) {
-      const lote = actualizadas.slice(i, i + 200);
-      const { error: errUp } = await sb
-        .from('stg_planilla_papel')
-        .upsert(lote, { onConflict: 'id' });
-      if (errUp) throw new Error(errUp.message);
-    }
+    await actualizarFilasPlanilla(actualizadas, COLS_CONCILIACION, TIPOS_CONCILIACION);
   } catch (e: any) {
     if (e && e.digest && String(e.digest).startsWith('NEXT_REDIRECT')) throw e;
     error = mensajeError(e);
@@ -387,33 +435,29 @@ export async function migrarPlanilla(): Promise<void> {
   let error = '';
 
   try {
-    const sb = db();
+    const filas = await q<any>(
+      `select * from stg_planilla_papel
+        where estado_validacion = 'listo'
+        order by id
+        limit 300`
+    );
 
-    const { data: filas, error: err } = await sb
-      .from('stg_planilla_papel')
-      .select('*')
-      .eq('estado_validacion', 'listo')
-      .order('id')
-      .limit(300);
-
-    if (err) throw new Error(err.message);
-    if (!filas || !filas.length) {
+    if (!filas.length) {
       redirect('/importar?ok=' + encodeURIComponent('No hay filas listas para migrar'));
     }
 
-    const { data: existentes } = await sb
-      .from('sesion_ambiente')
-      .select('hash_fila')
-      .not('hash_fila', 'is', null);
-    const hashes = new Set((existentes || []).map((r: any) => r.hash_fila));
+    const existentes = await q<any>(
+      'select hash_fila from sesion_ambiente where hash_fila is not null'
+    );
+    const hashes = new Set(existentes.map((r) => r.hash_fila));
 
     const aptas: any[] = [];
     const duplicadas: any[] = [];
 
-    for (const fila of filas as any[]) {
+    for (const fila of filas) {
       const hash = fila.hash_fila || hashFila(fila);
       if (hashes.has(hash)) {
-        duplicadas.push({ ...fila, estado_validacion: 'duplicado' });
+        duplicadas.push({ id: fila.id, estado_validacion: 'duplicado' });
       } else {
         hashes.add(hash);
         aptas.push({ ...fila, hash_fila: hash });
@@ -421,10 +465,7 @@ export async function migrarPlanilla(): Promise<void> {
     }
 
     if (duplicadas.length) {
-      const { error: errD } = await sb
-        .from('stg_planilla_papel')
-        .upsert(duplicadas, { onConflict: 'id' });
-      if (errD) throw new Error(errD.message);
+      await actualizarFilasPlanilla(duplicadas, ['estado_validacion'], ['text']);
     }
 
     if (aptas.length) {
@@ -450,24 +491,20 @@ export async function migrarPlanilla(): Promise<void> {
         registrado_por: usuario.id,
       }));
 
-      const { data: creadas, error: errIns } = await sb
-        .from('sesion_ambiente')
-        .insert(lote)
-        .select('id');
+      const creadas = await insertarLote<{ id: string; hash_fila: string }>(
+        'sesion_ambiente',
+        lote
+      );
 
-      if (errIns) throw new Error(errIns.message);
+      const idPorHash = new Map(creadas.map((r) => [r.hash_fila, r.id]));
 
-      const ids = (creadas || []).map((r: any) => r.id);
-      const actualizadas = aptas.map((f, i) => ({
-        ...f,
+      const actualizadas = aptas.map((f) => ({
+        id: f.id,
         estado_validacion: 'migrado',
-        sesion_id: ids[i] ?? null,
+        sesion_id: idPorHash.get(f.hash_fila) ?? null,
       }));
 
-      const { error: errUp } = await sb
-        .from('stg_planilla_papel')
-        .upsert(actualizadas, { onConflict: 'id' });
-      if (errUp) throw new Error(errUp.message);
+      await actualizarFilasPlanilla(actualizadas, ['estado_validacion', 'sesion_id'], ['text', 'bigint']);
 
       migradas = aptas.length;
     }
@@ -495,11 +532,10 @@ export async function forzarListo(formData: FormData): Promise<void> {
 
   let error = '';
   try {
-    const { error: err } = await db()
-      .from('stg_planilla_papel')
-      .update({ estado_validacion: 'listo' })
-      .eq('id', id);
-    if (err) error = err.message;
+    await ejecutar(
+      `update stg_planilla_papel set estado_validacion = 'listo' where id = $1`,
+      [id]
+    );
   } catch (e) {
     error = mensajeError(e);
   }
@@ -516,11 +552,10 @@ export async function descartarFila(formData: FormData): Promise<void> {
 
   let error = '';
   try {
-    const { error: err } = await db()
-      .from('stg_planilla_papel')
-      .update({ estado_validacion: 'descartado' })
-      .eq('id', id);
-    if (err) error = err.message;
+    await ejecutar(
+      `update stg_planilla_papel set estado_validacion = 'descartado' where id = $1`,
+      [id]
+    );
   } catch (e) {
     error = mensajeError(e);
   }
@@ -537,11 +572,10 @@ export async function reabrirFila(formData: FormData): Promise<void> {
 
   let error = '';
   try {
-    const { error: err } = await db()
-      .from('stg_planilla_papel')
-      .update({ estado_validacion: 'pendiente' })
-      .eq('id', id);
-    if (err) error = err.message;
+    await ejecutar(
+      `update stg_planilla_papel set estado_validacion = 'pendiente' where id = $1`,
+      [id]
+    );
   } catch (e) {
     error = mensajeError(e);
   }

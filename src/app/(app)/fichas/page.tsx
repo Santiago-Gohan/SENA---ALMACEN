@@ -1,5 +1,5 @@
 import { requireSession } from '@/lib/auth';
-import { db, dbConfigurada, mensajeError } from '@/lib/supabase';
+import { dbConfigurada, mensajeError, q } from '@/lib/db';
 import { JORNADAS, claseBadge, titulo } from '@/lib/utils';
 import { cambiarEstadoFicha, crearFicha, crearPrograma } from '@/actions/fichas';
 import SetupNotice from '@/components/SetupNotice';
@@ -21,21 +21,23 @@ export default async function FichasPage({ searchParams }: { searchParams: SP })
   let error = '';
 
   try {
-    const sb = db();
-
     const [resFichas, resProgramas] = await Promise.all([
-      sb
-        .from('ficha')
-        .select('id, codigo, jornada, activa, created_at, programa:programa_id(id, nombre)')
-        .order('codigo', { ascending: false })
-        .limit(500),
-      sb.from('programa').select('id, codigo, nombre, nivel, activo').order('nombre'),
+      q<any>(
+        `select f.id, f.codigo, f.jornada, f.activa, f.created_at,
+                p.id as programa_id, p.nombre as programa_nombre
+           from ficha f
+           left join programa p on p.id = f.programa_id
+          order by f.codigo desc
+          limit 500`
+      ),
+      q<any>('select id, codigo, nombre, nivel, activo from programa order by nombre'),
     ]);
 
-    if (resFichas.error) throw new Error(resFichas.error.message);
-
-    fichas = resFichas.data || [];
-    programas = resProgramas.data || [];
+    fichas = resFichas.map((f) => ({
+      ...f,
+      programa: f.programa_nombre ? { id: f.programa_id, nombre: f.programa_nombre } : null,
+    }));
+    programas = resProgramas;
   } catch (e) {
     error = mensajeError(e);
   }

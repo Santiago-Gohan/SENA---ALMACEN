@@ -15,8 +15,8 @@ export default function Error({ error, reset }: { error: Error; reset: () => voi
       </div>
       <p style={{ marginTop: 14 }}>
         <small className="muted">
-          Si el error menciona Supabase o credenciales, revisa el archivo <code>.env.local</code> y
-          que el esquema <code>supabase/schema.sql</code> ya se haya ejecutado.
+          Si el error menciona PostgreSQL o <code>DATABASE_URL</code>, revisa el archivo{' '}
+          <code>.env.local</code> y que el esquema <code>db/schema.sql</code> ya se haya aplicado.
         </small>
       </p>
     </div>

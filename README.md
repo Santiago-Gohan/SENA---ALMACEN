@@ -27,7 +27,7 @@ ambiente y con qué ficha.
 ## Stack
 
 - **Next.js 14** (App Router, Server Actions, TypeScript)
-- **Supabase** (PostgreSQL + Storage)
+- **PostgreSQL en Neon** (conexión directa con `pg`)
 - **Vercel** (hosting)
 - CSS propio (sin frameworks)
 - `qrcode` (QR en PNG), `html5-qrcode` (lectura con cámara), `bcryptjs` + `jose` (auth)
@@ -46,9 +46,10 @@ sena-almacen/
 │  │  ├─ login/
 │  │  └─ globals.css
 │  ├─ components/        # Nav, ScanQR, FirmaPad, Alerta, AreaPlanilla...
-│  ├─ lib/               # supabase, auth, utils
+│  ├─ lib/               # db (pg), auth, utils
 │  └─ middleware.ts      # protege todas las rutas
-├─ supabase/schema.sql   # esquema completo (tablas, índices, RLS, bucket)
+├─ db/schema.sql         # esquema completo (tablas e índices)
+├─ scripts/db-setup.mjs  # aplica el esquema en la base
 ├─ scripts/seed.mjs      # datos base + usuario administrador
 ├─ scripts/hash.mjs      # genera hash bcrypt de un PIN
 └─ .env.example
@@ -64,24 +65,24 @@ sena-almacen/
 npm install
 ```
 
-### 2. Crear el proyecto en Supabase
+### 2. Crear la base de datos en Neon
 
-1. Entra a <https://supabase.com> y crea un proyecto (plan gratuito).
-2. Abre **SQL Editor → New query**, pega el contenido de `supabase/schema.sql` y ejecútalo.
-   Esto crea las tablas, índices, RLS y el bucket público `firmas`.
-3. En **Project Settings → API** copia:
-   - `Project URL`
-   - `anon public key`
-   - `service_role key` (⚠ solo para el servidor)
+1. Entra a <https://console.neon.tech> y abre tu proyecto (o crea uno gratuito).
+2. Crea una base llamada `sena_almacen`.
+3. En **Dashboard → Connection string** copia la cadena (empieza por `postgresql://…`).
+   Usa la cadena con `-pooler` para producción.
+
+> El sistema usa una base aparte. Si ya tienes otro proyecto en Neon, no mezcles las tablas:
+> crea `sena_almacen` y apunta ahí `DATABASE_URL`.
 
 ### 3. Configurar variables de entorno
 
 Copia `.env.example` a `.env.local` y completa:
 
 ```env
-NEXT_PUBLIC_SUPABASE_URL=https://TU-PROYECTO.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=...
-SUPABASE_SERVICE_ROLE_KEY=...
+DATABASE_URL=postgresql://usuario:clave@ep-xxxx-pooler.us-east-2.aws.neon.tech/sena_almacen?sslmode=require
+PGSSL=require
+
 AUTH_SECRET=una-cadena-larga-y-aleatoria
 
 ADMIN_USER=admin
@@ -90,14 +91,16 @@ ADMIN_NOMBRE=Administrador SENA
 ```
 
 > `AUTH_SECRET` puede ser cualquier cadena larga. En producción cámbiala.
+> `PGSSL` es opcional: `require` fuerza SSL (Neon lo exige) y `disable` lo apaga en Postgres local.
 
-### 4. Crear datos base y administrador
+### 4. Crear las tablas y los datos base
 
 ```bash
-npm run seed
+npm run db:setup   # aplica db/schema.sql (se puede repetir sin daño)
+npm run seed       # roles, programas, ficha, categorías, ambientes y administrador
 ```
 
-Esto crea:
+El seed crea:
 
 - 3 roles: `administrador`, `almacenista`, `instructor`
 - Programas: ADSO, Técnico en Sistemas, Técnico en Agropecuaria
@@ -138,13 +141,14 @@ Abre <http://localhost:3000> e ingresa con `admin` y tu PIN.
    ```
 
 2. En <https://vercel.com> → **Add New → Project** → importa el repositorio.
-3. En **Environment Variables** agrega las mismas 4 variables de `.env.local` (no subas `.env.local`
-   al repo) y las de `ADMIN_*` si vas a ejecutar el seed desde local contra la base de producción.
+3. En **Environment Variables** agrega `DATABASE_URL` y `AUTH_SECRET` (las mismas de
+   `.env.local`). No subas `.env.local` al repo. Las variables `ADMIN_*` solo son necesarias si
+   vas a correr el seed desde local contra la base de producción.
 4. **Deploy**. Vercel detecta Next.js automáticamente.
 5. Abre la URL de producción e inicia sesión.
 
-> El seed se corre **desde tu computador** apuntando a la misma base de Supabase; no es necesario
-> ejecutarlo en Vercel.
+> El esquema y el seed se corren **desde tu computador** apuntando a la misma base de Neon; no es
+> necesario ejecutarlos en Vercel.
 
 ---
 
@@ -222,20 +226,19 @@ específicos (`fecha_invalida`, `hora_invalida`, `ficha_no_encontrada`, `instruc
 | `stg_planilla_papel` | Bandeja de digitalización del papel. |
 | `auditoria` / `configuracion` | Trazabilidad y parámetros. |
 
+El esquema completo está en `db/schema.sql`. Todas las fechas se manejan en
+**America/Bogota** y las columnas `date` se leen como texto ISO para no correr el día.
+
 ---
 
 ## Seguridad y Ley 1581 de 2012
 
-- La base de datos **solo se consulta desde el servidor** con la `service_role key`. El navegador
-  nunca recibe esa llave.
+- La base de datos **solo se consulta desde el servidor** con la cadena `DATABASE_URL`. El navegador
+  nunca recibe credenciales de la base.
 - Las contraseñas son PIN con hash **bcrypt**; la sesión es un JWT firmado en cookie `httpOnly`.
-- RLS está activo en todas las tablas: aunque alguien obtuviera la anon key, no puede leer datos.
-- La firma del instructor es un dato personal: se guarda con hash SHA-256 y solo debe usarse para
-  validar la sesión.
-- **El bucket `firmas` se crea como público** para poder mostrar la firma con una URL directa. Si el
-  centro exige confidencialidad, cámbialo a privado y genera *signed URLs* al consultar la firma.
-  Mientras sea público, cualquier persona con la URL exacta puede ver el trazo; la URL incluye un
-  hash y un timestamp, así que no es adivinable, pero tampoco es secreta.
+- La firma del instructor se guarda **dentro de la misma base** (columna `firma_url`, como dataURL)
+  junto a su hash SHA-256, y solo debe usarse para validar la sesión. No se sube a ningún servicio
+  externo, así el respaldo viaja completo con la base.
 - No hay límite de intentos fallidos en el login ni bloqueo temporal de la cuenta. Si el sistema se
   expone a Internet, agrega *rate limiting* (por ejemplo en Vercel o un middleware con conteo por IP).
 - Antes de usar datos reales, informa a instructores y aprendices el tratamiento de sus datos y
@@ -249,8 +252,8 @@ específicos (`fecha_invalida`, `hora_invalida`, `ficha_no_encontrada`, `instruc
 - No hay pantalla para que cada usuario cambie su PIN (se hace con `npm run seed` / SQL).
 - No hay recuperación de contraseña por correo.
 - La lectura de QR usa la cámara del navegador; en iPhone requiere HTTPS (Vercel ya lo da).
-- Si el bucket `firmas` no existe, la firma se guarda dentro de la base como respaldo (funciona,
-  pero es menos eficiente).
+- Las firmas viven en la base como texto: mantén un respaldo (`pg_dump`) y evita sesiones con
+  firmas enormes (el pad ya limita el tamaño).
 - **Importación**: la conciliación procesa hasta 1000 filas pendientes y la migración hasta 300
   filas listas por clic. Para planillas más grandes, repite los botones hasta terminar. El texto
   pegado se procesa en memoria, así que evita pegar más de ~1 MB de una vez.
@@ -258,7 +261,7 @@ específicos (`fecha_invalida`, `hora_invalida`, `ficha_no_encontrada`, `instruc
   la ficha, la fila queda en `programa_no_coincide` para revisión manual; no se adivina.
 - No incluye biometría ni sanciones automáticas: las misiones ecológicas quedan en el modelo de
   datos para la siguiente fase.
-- No hay generación de reportes en PDF/Excel todavía (consulta SQL en Supabase).
+- No hay generación de reportes en PDF/Excel todavía.
 
 ---
 
@@ -266,11 +269,11 @@ específicos (`fecha_invalida`, `hora_invalida`, `ficha_no_encontrada`, `instruc
 
 | Síntoma | Causa probable | Solución |
 |---|---|---|
-| “Falta conectar la base de datos” | No existe `.env.local` o está incompleto | Completa las variables y reinicia `npm run dev`. |
-| “relation ... does not exist” | No se ejecutó el esquema | Ejecuta `supabase/schema.sql` completo. |
+| “Falta conectar la base de datos” | No existe `.env.local` o falta `DATABASE_URL` | Completa las variables y reinicia `npm run dev`. |
+| “relation ... does not exist” | No se aplicó el esquema | Ejecuta `npm run db:setup`. |
+| Error de certificado SSL | `PGSSL` mal configurado | Usa `PGSSL=require` con Neon (o quítalo). |
 | “Usuario o PIN incorrecto” | El seed no creó el usuario o el PIN cambió | Ejecuta `$env:RESET_PIN=1; npm run seed`. |
 | La cámara no abre | Permiso denegado o sin HTTPS | Usa HTTPS (Vercel) o escribe el código a mano. |
-| La firma no se ve en Storage | Bucket inexistente o privado | Créalo como público (`firmas`) o revisa el respaldo en base. |
 | Error al migrar planilla | Ficha o ambiente inexistente | Corrige la fila o usa “Forzar” y completa luego. |
 
 ---
@@ -278,10 +281,11 @@ específicos (`fecha_invalida`, `hora_invalida`, `ficha_no_encontrada`, `instruc
 ## Scripts
 
 ```bash
-npm run dev      # desarrollo
-npm run build    # compilar para producción
-npm run start    # servir la compilación
-npm run seed     # datos base + administrador
+npm run dev        # desarrollo
+npm run build      # compilar para producción
+npm run start      # servir la compilación
+npm run db:setup   # crear/actualizar las tablas en la base
+npm run seed       # datos base + administrador
 npm run hash 4321  # hash bcrypt de un PIN
 ```
 

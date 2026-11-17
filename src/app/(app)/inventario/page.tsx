@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { requireSession } from '@/lib/auth';
-import { db, dbConfigurada, mensajeError } from '@/lib/supabase';
+import { dbConfigurada, mensajeError, q } from '@/lib/db';
 import {
   CONDICIONES,
   CRITICIDADES,
@@ -27,7 +27,7 @@ export default async function InventarioPage({ searchParams }: { searchParams: S
 
   if (!dbConfigurada()) return <SetupNotice />;
 
-  const q = (searchParams.q || '').trim();
+  const busqueda = (searchParams.q || '').trim();
   const estado = searchParams.estado || '';
   const ambiente = searchParams.ambiente || '';
 
@@ -38,41 +38,58 @@ export default async function InventarioPage({ searchParams }: { searchParams: S
   let error = '';
 
   try {
-    const sb = db();
+    const condiciones: string[] = ['o.activo'];
+    const valores: any[] = [];
 
-    let consulta = sb
-      .from('objeto')
-      .select(
-        'id, codigo_interno, nombre, descripcion, estado, condicion, es_sp, cantidad_actual, placa:placa_id(valor), categoria:categoria_id(nombre), ambiente:ambiente_id(codigo, nombre)',
-        { count: 'exact' }
-      )
-      .eq('activo', true)
-      .order('id', { ascending: false })
-      .limit(300);
-
-    if (q) {
-      const limpio = q.replace(/[%,()]/g, ' ').trim();
-      if (limpio) {
-        consulta = consulta.or(
-          `nombre.ilike.%${limpio}%,codigo_interno.ilike.%${limpio}%,placa_original.ilike.%${limpio}%`
-        );
-      }
+    const limpio = busqueda.replace(/[%,()]/g, ' ').trim();
+    if (limpio) {
+      valores.push(`%${limpio}%`);
+      const i = valores.length;
+      condiciones.push(
+        `(o.nombre ilike $${i} or o.codigo_interno ilike $${i} or o.placa_original ilike $${i})`
+      );
     }
-    if (estado) consulta = consulta.eq('estado', estado);
-    if (ambiente) consulta = consulta.eq('ambiente_id', Number(ambiente));
+    if (estado) {
+      valores.push(estado);
+      condiciones.push(`o.estado = $${valores.length}`);
+    }
+    if (ambiente && Number.isFinite(Number(ambiente))) {
+      valores.push(Number(ambiente));
+      condiciones.push(`o.ambiente_id = $${valores.length}`);
+    }
 
     const [res, resAmb, resCat] = await Promise.all([
-      consulta,
-      sb.from('ambiente').select('id, codigo, nombre').eq('activo', true).order('codigo'),
-      sb.from('categoria').select('id, nombre').eq('activo', true).order('nombre'),
+      q<any>(
+        `select o.id, o.codigo_interno, o.nombre, o.descripcion, o.estado, o.condicion,
+                o.es_sp, o.cantidad_actual,
+                pl.valor as placa_valor,
+                c.nombre as categoria_nombre,
+                a.codigo as ambiente_codigo, a.nombre as ambiente_nombre,
+                count(*) over ()::int as total
+           from objeto o
+           left join placa pl on pl.id = o.placa_id
+           left join categoria c on c.id = o.categoria_id
+           left join ambiente a on a.id = o.ambiente_id
+          where ${condiciones.join(' and ')}
+          order by o.id desc
+          limit 300`,
+        valores
+      ),
+      q<any>('select id, codigo, nombre from ambiente where activo order by codigo'),
+      q<any>('select id, nombre from categoria where activo order by nombre'),
     ]);
 
-    if (res.error) throw new Error(res.error.message);
-
-    objetos = res.data || [];
-    total = res.count || objetos.length;
-    ambientes = resAmb.data || [];
-    categorias = resCat.data || [];
+    objetos = res.map((o) => ({
+      ...o,
+      placa: o.placa_valor ? { valor: o.placa_valor } : null,
+      categoria: o.categoria_nombre ? { nombre: o.categoria_nombre } : null,
+      ambiente: o.ambiente_codigo
+        ? { codigo: o.ambiente_codigo, nombre: o.ambiente_nombre }
+        : null,
+    }));
+    total = res[0]?.total ?? objetos.length;
+    ambientes = resAmb;
+    categorias = resCat;
   } catch (e) {
     error = mensajeError(e);
   }
@@ -112,7 +129,7 @@ export default async function InventarioPage({ searchParams }: { searchParams: S
             id="q"
             className="input"
             name="q"
-            defaultValue={q}
+            defaultValue={busqueda}
             placeholder="Nombre, código o placa"
           />
         </div>

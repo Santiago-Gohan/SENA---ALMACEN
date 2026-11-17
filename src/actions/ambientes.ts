@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
-import { db, mensajeError } from '@/lib/supabase';
+import { ejecutar, mensajeError, q, uno } from '@/lib/db';
 import { requireSession } from '@/lib/auth';
 import { qrAmbiente } from '@/lib/utils';
 
@@ -28,30 +28,29 @@ export async function crearAmbiente(formData: FormData): Promise<void> {
 
   let error = '';
   try {
-    const sb = db();
-    const { data: existente } = await sb.from('ambiente').select('id').eq('codigo', codigo).maybeSingle();
+    const existente = await uno('select id from ambiente where codigo = $1', [codigo]);
     if (existente) {
       error = `Ya existe un ambiente con el código ${codigo}`;
     } else {
-      const { error: err } = await sb.from('ambiente').insert({
-        codigo,
-        nombre,
-        bloque: texto(formData.get('bloque')) || null,
-        piso: entero(formData.get('piso')),
-        capacidad: entero(formData.get('capacidad')),
-        tipo: texto(formData.get('tipo')) || 'aula',
-        codigo_qr: qrAmbiente(codigo),
-      });
-      if (err) error = err.message;
-      else {
-        await sb.from('auditoria').insert({
-          usuario_id: usuario.id,
-          accion: 'crear_ambiente',
-          entidad: 'ambiente',
-          entidad_id: codigo,
-          datos: { nombre },
-        });
-      }
+      await q(
+        `insert into ambiente (codigo, nombre, bloque, piso, capacidad, tipo, codigo_qr)
+         values ($1, $2, $3, $4, $5, $6, $7)`,
+        [
+          codigo,
+          nombre,
+          texto(formData.get('bloque')) || null,
+          entero(formData.get('piso')),
+          entero(formData.get('capacidad')),
+          texto(formData.get('tipo')) || 'aula',
+          qrAmbiente(codigo),
+        ]
+      );
+
+      await q(
+        `insert into auditoria (usuario_id, accion, entidad, entidad_id, datos)
+         values ($1, $2, $3, $4, $5::jsonb)`,
+        [usuario.id, 'crear_ambiente', 'ambiente', codigo, JSON.stringify({ nombre })]
+      );
     }
   } catch (e) {
     error = mensajeError(e);
@@ -70,17 +69,19 @@ export async function actualizarAmbiente(formData: FormData): Promise<void> {
 
   let error = '';
   try {
-    const { error: err } = await db()
-      .from('ambiente')
-      .update({
-        nombre: texto(formData.get('nombre')),
-        bloque: texto(formData.get('bloque')) || null,
-        piso: entero(formData.get('piso')),
-        capacidad: entero(formData.get('capacidad')),
-        tipo: texto(formData.get('tipo')) || 'aula',
-      })
-      .eq('id', id);
-    if (err) error = err.message;
+    await ejecutar(
+      `update ambiente
+          set nombre = $2, bloque = $3, piso = $4, capacidad = $5, tipo = $6
+        where id = $1`,
+      [
+        id,
+        texto(formData.get('nombre')),
+        texto(formData.get('bloque')) || null,
+        entero(formData.get('piso')),
+        entero(formData.get('capacidad')),
+        texto(formData.get('tipo')) || 'aula',
+      ]
+    );
   } catch (e) {
     error = mensajeError(e);
   }
@@ -100,8 +101,7 @@ export async function cambiarEstadoAmbiente(formData: FormData): Promise<void> {
 
   let error = '';
   try {
-    const { error: err } = await db().from('ambiente').update({ activo }).eq('id', id);
-    if (err) error = err.message;
+    await ejecutar('update ambiente set activo = $2 where id = $1', [id, activo]);
   } catch (e) {
     error = mensajeError(e);
   }

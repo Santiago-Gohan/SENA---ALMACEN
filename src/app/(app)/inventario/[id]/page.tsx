@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { requireSession } from '@/lib/auth';
-import { db, dbConfigurada, mensajeError } from '@/lib/supabase';
+import { dbConfigurada, mensajeError, q, uno } from '@/lib/db';
 import {
   CONDICIONES,
   CRITICIDADES,
@@ -44,33 +44,51 @@ export default async function ObjetoDetallePage({
   let error = '';
 
   try {
-    const sb = db();
-
     const [res, resHist, resAmb, resCat] = await Promise.all([
-      sb
-        .from('objeto')
-        .select(
-          '*, placa:placa_id(valor), categoria:categoria_id(nombre), ambiente:ambiente_id(codigo, nombre)'
-        )
-        .eq('id', id)
-        .maybeSingle(),
-      sb
-        .from('objeto_historial')
-        .select(
-          'id, tipo_evento, detalle, fecha, ambiente_origen:ambiente_origen_id(codigo), ambiente_destino:ambiente_destino_id(codigo)'
-        )
-        .eq('objeto_id', id)
-        .order('fecha', { ascending: false })
-        .limit(25),
-      sb.from('ambiente').select('id, codigo, nombre').eq('activo', true).order('codigo'),
-      sb.from('categoria').select('id, nombre').eq('activo', true).order('nombre'),
+      uno<any>(
+        `select o.*,
+                pl.valor as placa_valor,
+                c.nombre as categoria_nombre,
+                a.codigo as ambiente_codigo, a.nombre as ambiente_nombre
+           from objeto o
+           left join placa pl on pl.id = o.placa_id
+           left join categoria c on c.id = o.categoria_id
+           left join ambiente a on a.id = o.ambiente_id
+          where o.id = $1`,
+        [id]
+      ),
+      q<any>(
+        `select h.id, h.tipo_evento, h.detalle, h.fecha,
+                ao.codigo as origen_codigo, ad.codigo as destino_codigo
+           from objeto_historial h
+           left join ambiente ao on ao.id = h.ambiente_origen_id
+           left join ambiente ad on ad.id = h.ambiente_destino_id
+          where h.objeto_id = $1
+          order by h.fecha desc
+          limit 25`,
+        [id]
+      ),
+      q<any>('select id, codigo, nombre from ambiente where activo order by codigo'),
+      q<any>('select id, nombre from categoria where activo order by nombre'),
     ]);
 
-    if (res.error) throw new Error(res.error.message);
-    objeto = res.data;
-    historial = resHist.data || [];
-    ambientes = resAmb.data || [];
-    categorias = resCat.data || [];
+    objeto = res
+      ? {
+          ...res,
+          placa: res.placa_valor ? { valor: res.placa_valor } : null,
+          categoria: res.categoria_nombre ? { nombre: res.categoria_nombre } : null,
+          ambiente: res.ambiente_codigo
+            ? { codigo: res.ambiente_codigo, nombre: res.ambiente_nombre }
+            : null,
+        }
+      : null;
+    historial = resHist.map((h) => ({
+      ...h,
+      ambiente_origen: h.origen_codigo ? { codigo: h.origen_codigo } : null,
+      ambiente_destino: h.destino_codigo ? { codigo: h.destino_codigo } : null,
+    }));
+    ambientes = resAmb;
+    categorias = resCat;
   } catch (e) {
     error = mensajeError(e);
   }

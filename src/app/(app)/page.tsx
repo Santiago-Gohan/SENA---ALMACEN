@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { requireSession } from '@/lib/auth';
-import { db, dbConfigurada, mensajeError } from '@/lib/supabase';
+import { dbConfigurada, mensajeError, q } from '@/lib/db';
 import { claseBadge, fmtFecha, fmtHora, hoyISO, titulo } from '@/lib/utils';
 import SetupNotice from '@/components/SetupNotice';
 import Alerta from '@/components/Alerta';
@@ -18,80 +18,82 @@ export default async function PanelPage({ searchParams }: { searchParams: SP }) 
   let error = '';
 
   try {
-    const sb = db();
-
-    const contar = (tabla: string, filtro?: (q: any) => any) => {
-      let q = sb.from(tabla).select('id', { count: 'exact', head: true });
-      if (filtro) q = filtro(q);
-      return q;
-    };
-
-    const [
-      objetos,
-      enUso,
-      mantenimiento,
-      ambientes,
-      abiertas,
-      novedades,
-      sesionesHoy,
-      ultimos,
-      abiertasLista,
-      novedadesLista,
-      listaAmbientes,
-      objetosAmbiente,
-    ] = await Promise.all([
-      contar('objeto', (q) => q.eq('activo', true)),
-      contar('objeto', (q) => q.eq('activo', true).eq('estado', 'en_uso')),
-      contar('objeto', (q) => q.eq('activo', true).eq('estado', 'mantenimiento')),
-      contar('ambiente', (q) => q.eq('activo', true)),
-      contar('sesion_ambiente', (q) => q.is('hora_salida', null)),
-      contar('novedad', (q) => q.eq('estado', 'abierta')),
-      contar('sesion_ambiente', (q) => q.eq('fecha', hoyISO())),
-      sb
-        .from('objeto')
-        .select('id, codigo_interno, nombre, estado, ambiente:ambiente_id(codigo)')
-        .eq('activo', true)
-        .order('id', { ascending: false })
-        .limit(6),
-      sb
-        .from('sesion_ambiente')
-        .select(
-          'id, hora_entrada, estado, ambiente:ambiente_id(codigo, nombre), instructor:instructor_id(nombres, apellidos), ficha:ficha_id(codigo)'
-        )
-        .is('hora_salida', null)
-        .order('hora_entrada', { ascending: false })
-        .limit(5),
-      sb
-        .from('novedad')
-        .select('id, tipo, descripcion, fecha_apertura, estado')
-        .eq('estado', 'abierta')
-        .order('fecha_apertura', { ascending: false })
-        .limit(5),
-      sb.from('ambiente').select('id, codigo, nombre').eq('activo', true).limit(300),
-      sb.from('objeto').select('ambiente_id').eq('activo', true),
+    const [totales, ultimos, abiertasLista, novedadesLista, topAmbientes] = await Promise.all([
+      q<any>(
+        `select
+           (select count(*) from objeto where activo)::int as objetos,
+           (select count(*) from objeto where activo and estado = 'en_uso')::int as en_uso,
+           (select count(*) from objeto where activo and estado = 'mantenimiento')::int as mantenimiento,
+           (select count(*) from ambiente where activo)::int as ambientes,
+           (select count(*) from sesion_ambiente where hora_salida is null)::int as abiertas,
+           (select count(*) from novedad where estado = 'abierta')::int as novedades,
+           (select count(*) from sesion_ambiente where fecha = $1::date)::int as sesiones_hoy`,
+        [hoyISO()]
+      ),
+      q<any>(
+        `select o.id, o.codigo_interno, o.nombre, o.estado, a.codigo as ambiente_codigo
+           from objeto o
+           left join ambiente a on a.id = o.ambiente_id
+          where o.activo
+          order by o.id desc
+          limit 6`
+      ),
+      q<any>(
+        `select s.id, s.hora_entrada, s.estado,
+                a.codigo as ambiente_codigo, a.nombre as ambiente_nombre,
+                p.nombres as instructor_nombres, p.apellidos as instructor_apellidos,
+                f.codigo as ficha_codigo
+           from sesion_ambiente s
+           left join ambiente a on a.id = s.ambiente_id
+           left join persona p on p.id = s.instructor_id
+           left join ficha f on f.id = s.ficha_id
+          where s.hora_salida is null
+          order by s.hora_entrada desc
+          limit 5`
+      ),
+      q<any>(
+        `select id, tipo, descripcion, fecha_apertura, estado
+           from novedad
+          where estado = 'abierta'
+          order by fecha_apertura desc
+          limit 5`
+      ),
+      q<any>(
+        `select a.id, a.codigo, a.nombre, count(o.id)::int as total
+           from ambiente a
+           left join objeto o on o.ambiente_id = a.id and o.activo
+          where a.activo
+          group by a.id, a.codigo, a.nombre
+          order by total desc, a.codigo
+          limit 5`
+      ),
     ]);
 
-    const conteo: Record<number, number> = {};
-    for (const o of (objetosAmbiente.data || []) as any[]) {
-      if (o.ambiente_id) conteo[o.ambiente_id] = (conteo[o.ambiente_id] || 0) + 1;
-    }
-
-    const topAmbientes = ((listaAmbientes.data || []) as any[])
-      .map((a) => ({ ...a, total: conteo[a.id] || 0 }))
-      .sort((a, b) => b.total - a.total)
-      .slice(0, 5);
+    const t = totales[0] ?? {};
 
     d = {
-      objetos: objetos.count || 0,
-      enUso: enUso.count || 0,
-      mantenimiento: mantenimiento.count || 0,
-      ambientes: ambientes.count || 0,
-      abiertas: abiertas.count || 0,
-      novedades: novedades.count || 0,
-      sesionesHoy: sesionesHoy.count || 0,
-      ultimos: ultimos.data || [],
-      abiertasLista: abiertasLista.data || [],
-      novedadesLista: novedadesLista.data || [],
+      objetos: t.objetos ?? 0,
+      enUso: t.en_uso ?? 0,
+      mantenimiento: t.mantenimiento ?? 0,
+      ambientes: t.ambientes ?? 0,
+      abiertas: t.abiertas ?? 0,
+      novedades: t.novedades ?? 0,
+      sesionesHoy: t.sesiones_hoy ?? 0,
+      ultimos: ultimos.map((o) => ({
+        ...o,
+        ambiente: o.ambiente_codigo ? { codigo: o.ambiente_codigo } : null,
+      })),
+      abiertasLista: abiertasLista.map((s) => ({
+        ...s,
+        ambiente: s.ambiente_codigo
+          ? { codigo: s.ambiente_codigo, nombre: s.ambiente_nombre }
+          : null,
+        instructor: s.instructor_nombres
+          ? { nombres: s.instructor_nombres, apellidos: s.instructor_apellidos }
+          : null,
+        ficha: s.ficha_codigo ? { codigo: s.ficha_codigo } : null,
+      })),
+      novedadesLista,
       topAmbientes,
     };
   } catch (e) {

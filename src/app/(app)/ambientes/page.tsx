@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { requireSession } from '@/lib/auth';
-import { db, dbConfigurada, mensajeError } from '@/lib/supabase';
+import { dbConfigurada, mensajeError, q } from '@/lib/db';
 import { TIPOS_AMBIENTE, titulo } from '@/lib/utils';
 import { crearAmbiente } from '@/actions/ambientes';
 import SetupNotice from '@/components/SetupNotice';
@@ -21,26 +21,19 @@ export default async function AmbientesPage({ searchParams }: { searchParams: SP
   let error = '';
 
   try {
-    const sb = db();
+    ambientes = await q<any>(
+      `select a.id, a.codigo, a.nombre, a.bloque, a.piso, a.capacidad, a.tipo,
+              a.activo, a.codigo_qr,
+              (select count(*) from objeto o where o.ambiente_id = a.id and o.activo)::int as objetos,
+              (select count(*) from sesion_ambiente s
+                where s.ambiente_id = a.id and s.hora_salida is null)::int as abiertas
+         from ambiente a
+        order by a.codigo`
+    );
 
-    const [res, resObj, resSes] = await Promise.all([
-      sb
-        .from('ambiente')
-        .select('id, codigo, nombre, bloque, piso, capacidad, tipo, activo, codigo_qr')
-        .order('codigo'),
-      sb.from('objeto').select('ambiente_id').eq('activo', true),
-      sb.from('sesion_ambiente').select('ambiente_id').is('hora_salida', null),
-    ]);
-
-    if (res.error) throw new Error(res.error.message);
-
-    ambientes = res.data || [];
-
-    for (const o of (resObj.data || []) as any[]) {
-      if (o.ambiente_id) conteoObjetos[o.ambiente_id] = (conteoObjetos[o.ambiente_id] || 0) + 1;
-    }
-    for (const s of (resSes.data || []) as any[]) {
-      if (s.ambiente_id) conteoAbiertas[s.ambiente_id] = (conteoAbiertas[s.ambiente_id] || 0) + 1;
+    for (const a of ambientes) {
+      conteoObjetos[a.id] = a.objetos || 0;
+      conteoAbiertas[a.id] = a.abiertas || 0;
     }
   } catch (e) {
     error = mensajeError(e);

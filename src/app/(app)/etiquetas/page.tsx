@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { requireSession } from '@/lib/auth';
-import { db, dbConfigurada, mensajeError } from '@/lib/supabase';
+import { dbConfigurada, mensajeError, q } from '@/lib/db';
 import { fmtFecha, hoyISO } from '@/lib/utils';
 import PrintButton from '@/components/PrintButton';
 import SetupNotice from '@/components/SetupNotice';
@@ -16,43 +16,40 @@ export default async function EtiquetasPage({ searchParams }: { searchParams: SP
   if (!dbConfigurada()) return <SetupNotice />;
 
   const tipo = searchParams.tipo === 'objetos' ? 'objetos' : 'ambientes';
-  const q = (searchParams.q || '').trim();
+  const busqueda = (searchParams.q || '').trim();
 
   let items: any[] = [];
   let error = '';
 
   try {
-    const sb = db();
-    const limpio = q.replace(/[%,()]/g, ' ').trim();
+    const limpio = busqueda.replace(/[%,()]/g, ' ').trim();
+    const patron = limpio ? `%${limpio}%` : null;
 
     if (tipo === 'objetos') {
-      let consulta = sb
-        .from('objeto')
-        .select('id, codigo_interno, nombre, codigo_qr, ambiente:ambiente_id(codigo)')
-        .eq('activo', true)
-        .order('codigo_interno')
-        .limit(400);
-      if (limpio) {
-        consulta = consulta.or(
-          `nombre.ilike.%${limpio}%,codigo_interno.ilike.%${limpio}%`
-        );
-      }
-      const res = await consulta;
-      if (res.error) throw new Error(res.error.message);
-      items = res.data || [];
+      const filas = await q<any>(
+        `select o.id, o.codigo_interno, o.nombre, o.codigo_qr, a.codigo as ambiente_codigo
+           from objeto o
+           left join ambiente a on a.id = o.ambiente_id
+          where o.activo
+            and ($1::text is null or o.nombre ilike $1 or o.codigo_interno ilike $1)
+          order by o.codigo_interno
+          limit 400`,
+        [patron]
+      );
+      items = filas.map((o) => ({
+        ...o,
+        ambiente: o.ambiente_codigo ? { codigo: o.ambiente_codigo } : null,
+      }));
     } else {
-      let consulta = sb
-        .from('ambiente')
-        .select('id, codigo, nombre, codigo_qr')
-        .eq('activo', true)
-        .order('codigo')
-        .limit(400);
-      if (limpio) {
-        consulta = consulta.or(`codigo.ilike.%${limpio}%,nombre.ilike.%${limpio}%`);
-      }
-      const res = await consulta;
-      if (res.error) throw new Error(res.error.message);
-      items = res.data || [];
+      items = await q<any>(
+        `select id, codigo, nombre, codigo_qr
+           from ambiente
+          where activo
+            and ($1::text is null or codigo ilike $1 or nombre ilike $1)
+          order by codigo
+          limit 400`,
+        [patron]
+      );
     }
   } catch (e) {
     error = mensajeError(e);
@@ -98,7 +95,7 @@ export default async function EtiquetasPage({ searchParams }: { searchParams: SP
             id="q"
             className="input"
             name="q"
-            defaultValue={q}
+            defaultValue={busqueda}
             placeholder={tipo === 'ambientes' ? 'Código o nombre' : 'Código o nombre del objeto'}
           />
         </div>

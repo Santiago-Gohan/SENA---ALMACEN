@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { requireSession } from '@/lib/auth';
-import { db, dbConfigurada, mensajeError } from '@/lib/supabase';
+import { dbConfigurada, mensajeError, q } from '@/lib/db';
 import { claseBadge, fmtFecha, fmtHora, hoyISO, titulo } from '@/lib/utils';
 import { abrirSesion, cerrarSesion } from '@/actions/sesiones';
 import ScanQR from '@/components/ScanQR';
@@ -26,47 +26,78 @@ export default async function AccesoPage({ searchParams }: { searchParams: SP })
   let error = '';
 
   try {
-    const sb = db();
-
     const [resAmb, resProg, resFichas, resPers, resAbiertas, resRecientes] = await Promise.all([
-      sb.from('ambiente').select('id, codigo, nombre').eq('activo', true).order('codigo'),
-      sb.from('programa').select('id, nombre, codigo').eq('activo', true).order('nombre'),
-      sb
-        .from('ficha')
-        .select('id, codigo, programa:programa_id(nombre)')
-        .eq('activa', true)
-        .order('codigo')
-        .limit(300),
-      sb
-        .from('persona')
-        .select('id, nombres, apellidos')
-        .eq('tipo_persona', 'instructor')
-        .eq('activo', true)
-        .order('nombres')
-        .limit(500),
-      sb
-        .from('sesion_ambiente')
-        .select(
-          'id, fecha, hora_entrada, estado, ambiente:ambiente_id(codigo, nombre), instructor:instructor_id(nombres, apellidos), ficha:ficha_id(codigo)'
-        )
-        .is('hora_salida', null)
-        .order('hora_entrada', { ascending: true })
-        .limit(100),
-      sb
-        .from('sesion_ambiente')
-        .select(
-          'id, fecha, hora_entrada, hora_salida, estado, firma_metodo, ambiente:ambiente_id(codigo), instructor:instructor_id(nombres, apellidos), ficha:ficha_id(codigo)'
-        )
-        .order('hora_entrada', { ascending: false })
-        .limit(20),
+      q<any>(
+        'select id, codigo, nombre from ambiente where activo order by codigo'
+      ),
+      q<any>('select id, nombre, codigo from programa where activo order by nombre'),
+      q<any>(
+        `select f.id, f.codigo, p.nombre as programa_nombre
+           from ficha f
+           left join programa p on p.id = f.programa_id
+          where f.activa
+          order by f.codigo
+          limit 300`
+      ),
+      q<any>(
+        `select id, nombres, apellidos
+           from persona
+          where tipo_persona = 'instructor' and activo
+          order by nombres
+          limit 500`
+      ),
+      q<any>(
+        `select s.id, s.fecha, s.hora_entrada, s.estado,
+                a.codigo as ambiente_codigo, a.nombre as ambiente_nombre,
+                p.nombres as instructor_nombres, p.apellidos as instructor_apellidos,
+                f.codigo as ficha_codigo
+           from sesion_ambiente s
+           left join ambiente a on a.id = s.ambiente_id
+           left join persona p on p.id = s.instructor_id
+           left join ficha f on f.id = s.ficha_id
+          where s.hora_salida is null
+          order by s.hora_entrada asc
+          limit 100`
+      ),
+      q<any>(
+        `select s.id, s.fecha, s.hora_entrada, s.hora_salida, s.estado, s.firma_metodo,
+                a.codigo as ambiente_codigo,
+                p.nombres as instructor_nombres, p.apellidos as instructor_apellidos,
+                f.codigo as ficha_codigo
+           from sesion_ambiente s
+           left join ambiente a on a.id = s.ambiente_id
+           left join persona p on p.id = s.instructor_id
+           left join ficha f on f.id = s.ficha_id
+          order by s.hora_entrada desc
+          limit 20`
+      ),
     ]);
 
-    ambientes = resAmb.data || [];
-    programas = resProg.data || [];
-    fichas = resFichas.data || [];
-    instructores = resPers.data || [];
-    abiertas = resAbiertas.data || [];
-    recientes = resRecientes.data || [];
+    ambientes = resAmb;
+    programas = resProg;
+    fichas = resFichas.map((f) => ({
+      ...f,
+      programa: f.programa_nombre ? { nombre: f.programa_nombre } : null,
+    }));
+    instructores = resPers;
+    abiertas = resAbiertas.map((s) => ({
+      ...s,
+      ambiente: s.ambiente_codigo
+        ? { codigo: s.ambiente_codigo, nombre: s.ambiente_nombre }
+        : null,
+      instructor: s.instructor_nombres
+        ? { nombres: s.instructor_nombres, apellidos: s.instructor_apellidos }
+        : null,
+      ficha: s.ficha_codigo ? { codigo: s.ficha_codigo } : null,
+    }));
+    recientes = resRecientes.map((s) => ({
+      ...s,
+      ambiente: s.ambiente_codigo ? { codigo: s.ambiente_codigo } : null,
+      instructor: s.instructor_nombres
+        ? { nombres: s.instructor_nombres, apellidos: s.instructor_apellidos }
+        : null,
+      ficha: s.ficha_codigo ? { codigo: s.ficha_codigo } : null,
+    }));
   } catch (e) {
     error = mensajeError(e);
   }

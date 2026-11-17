@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
-import { db, mensajeError } from '@/lib/supabase';
+import { ejecutar, mensajeError, q, uno } from '@/lib/db';
 import { requireSession } from '@/lib/auth';
 import { normalizarFicha } from '@/lib/utils';
 
@@ -30,26 +30,21 @@ export async function crearFicha(formData: FormData): Promise<void> {
   let error = '';
 
   try {
-    const sb = db();
-    const { data: existe } = await sb.from('ficha').select('id').eq('codigo', codigo).maybeSingle();
+    const existe = await uno('select id from ficha where codigo = $1', [codigo]);
 
     if (existe) {
       error = `La ficha ${codigo} ya está registrada`;
     } else {
-      const { error: err } = await sb.from('ficha').insert({
-        codigo,
-        programa_id: programaId,
-        jornada,
-        activa: true,
-      });
-      if (err) throw new Error(err.message);
+      await q(
+        `insert into ficha (codigo, programa_id, jornada, activa) values ($1, $2, $3, true)`,
+        [codigo, programaId, jornada]
+      );
 
-      await sb.from('auditoria').insert({
-        usuario_id: usuario.id,
-        accion: 'crear_ficha',
-        entidad: 'ficha',
-        entidad_id: codigo,
-      });
+      await q(
+        `insert into auditoria (usuario_id, accion, entidad, entidad_id)
+         values ($1, $2, $3, $4)`,
+        [usuario.id, 'crear_ficha', 'ficha', codigo]
+      );
     }
   } catch (e) {
     error = mensajeError(e);
@@ -71,8 +66,7 @@ export async function cambiarEstadoFicha(formData: FormData): Promise<void> {
   let error = '';
 
   try {
-    const { error: err } = await db().from('ficha').update({ activa }).eq('id', id);
-    if (err) throw new Error(err.message);
+    await ejecutar('update ficha set activa = $2 where id = $1', [id, activa]);
   } catch (e) {
     error = mensajeError(e);
   }
@@ -97,25 +91,22 @@ export async function crearPrograma(formData: FormData): Promise<void> {
   let error = '';
 
   try {
-    const sb = db();
-    const { data: existe } = await sb
-      .from('programa')
-      .select('id')
-      .eq('codigo', codigo)
-      .maybeSingle();
+    const existe = await uno('select id from programa where codigo = $1', [codigo]);
 
     if (existe) {
       error = `El programa ${codigo} ya existe`;
     } else {
-      const { error: err } = await sb.from('programa').insert({ codigo, nombre, nivel });
-      if (err) throw new Error(err.message);
+      await q('insert into programa (codigo, nombre, nivel) values ($1, $2, $3)', [
+        codigo,
+        nombre,
+        nivel,
+      ]);
 
-      await sb.from('auditoria').insert({
-        usuario_id: usuario.id,
-        accion: 'crear_programa',
-        entidad: 'programa',
-        entidad_id: codigo,
-      });
+      await q(
+        `insert into auditoria (usuario_id, accion, entidad, entidad_id)
+         values ($1, $2, $3, $4)`,
+        [usuario.id, 'crear_programa', 'programa', codigo]
+      );
     }
   } catch (e) {
     error = mensajeError(e);

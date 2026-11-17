@@ -3,10 +3,10 @@
  * roles, programas, ficha, categorías, ambientes y usuario administrador.
  *
  * Uso:  npm run seed
- * Requiere .env.local con NEXT_PUBLIC_SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY.
+ * Requiere .env.local con DATABASE_URL.
  */
 import { existsSync, readFileSync } from 'node:fs';
-import { createClient } from '@supabase/supabase-js';
+import pg from 'pg';
 import bcrypt from 'bcryptjs';
 
 function cargarEnv(archivo) {
@@ -28,18 +28,28 @@ function cargarEnv(archivo) {
 cargarEnv('.env.local');
 cargarEnv('.env');
 
-const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const url = process.env.DATABASE_URL;
 
-if (!url || !key) {
-  console.error('\n❌ Falta configurar Supabase.');
-  console.error('   Copia .env.example a .env.local y completa:');
-  console.error('   - NEXT_PUBLIC_SUPABASE_URL');
-  console.error('   - SUPABASE_SERVICE_ROLE_KEY\n');
+if (!url) {
+  console.error('\n❌ Falta configurar la base de datos.');
+  console.error('   Copia .env.example a .env.local y completa DATABASE_URL.\n');
   process.exit(1);
 }
 
-const sb = createClient(url, key, { auth: { persistSession: false } });
+const esLocal = /(^|@)(localhost|127\.0\.0\.1|\[::1\])[:/]/.test(url);
+const ssl =
+  process.env.PGSSL === 'disable'
+    ? false
+    : process.env.PGSSL === 'require' || !esLocal
+    ? { rejectUnauthorized: false }
+    : false;
+
+const pool = new pg.Pool({ connectionString: url, ssl, max: 2 });
+
+async function uno(texto, params = []) {
+  const res = await pool.query(texto, params);
+  return res.rows[0] ?? null;
+}
 
 const ROLES = [
   {
@@ -92,75 +102,93 @@ const AMBIENTES = [
 ];
 
 async function main() {
-  console.log(`\n▶ Conectando a ${url}\n`);
+  const u = new URL(url);
+  console.log(`\n▶ Conectando a ${u.host}${u.pathname}\n`);
 
-  // Roles
-  const { error: errRoles } = await sb.from('rol').upsert(ROLES, { onConflict: 'nombre' });
-  if (errRoles) throw new Error(`Roles: ${errRoles.message}`);
+  for (const rol of ROLES) {
+    await pool.query(
+      `insert into rol (nombre, descripcion, permisos)
+       values ($1, $2, $3::jsonb)
+       on conflict (nombre) do update
+         set descripcion = excluded.descripcion,
+             permisos = excluded.permisos`,
+      [rol.nombre, rol.descripcion, JSON.stringify(rol.permisos)]
+    );
+  }
   console.log(`✓ ${ROLES.length} roles`);
 
-  // Programas
-  const { error: errProg } = await sb.from('programa').upsert(PROGRAMAS, { onConflict: 'codigo' });
-  if (errProg) throw new Error(`Programas: ${errProg.message}`);
+  for (const p of PROGRAMAS) {
+    await pool.query(
+      `insert into programa (codigo, nombre, nivel)
+       values ($1, $2, $3)
+       on conflict (codigo) do update
+         set nombre = excluded.nombre,
+             nivel = excluded.nivel`,
+      [p.codigo, p.nombre, p.nivel]
+    );
+  }
   console.log(`✓ ${PROGRAMAS.length} programas`);
 
-  // Ficha de ejemplo
-  const { data: adso, error: errAdso } = await sb
-    .from('programa')
-    .select('id')
-    .eq('codigo', '228106')
-    .single();
-  if (errAdso) throw new Error(`Programa ADSO: ${errAdso.message}`);
+  const adso = await uno('select id from programa where codigo = $1', ['228106']);
 
-  const { error: errFicha } = await sb.from('ficha').upsert(
-    [
-      {
-        codigo: '3535013',
-        programa_id: adso.id,
-        jornada: 'mañana',
-        activa: true,
-      },
-    ],
-    { onConflict: 'codigo' }
+  await pool.query(
+    `insert into ficha (codigo, programa_id, jornada, activa)
+     values ($1, $2, 'mañana', true)
+     on conflict (codigo) do update
+       set programa_id = excluded.programa_id,
+           jornada = excluded.jornada,
+           activa = true`,
+    ['3535013', adso?.id ?? null]
   );
-  if (errFicha) throw new Error(`Ficha: ${errFicha.message}`);
   console.log('✓ ficha 3535013 (ADSO, mañana)');
 
-  // Categorías
-  const { error: errCat } = await sb
-    .from('categoria')
-    .upsert(
-      CATEGORIAS.map((nombre) => ({ nombre })),
-      { onConflict: 'nombre' }
+  for (const nombre of CATEGORIAS) {
+    await pool.query(
+      `insert into categoria (nombre) values ($1)
+       on conflict (nombre) do nothing`,
+      [nombre]
     );
-  if (errCat) throw new Error(`Categorías: ${errCat.message}`);
+  }
   console.log(`✓ ${CATEGORIAS.length} categorías`);
 
-  // Ambientes
-  const { error: errAmb } = await sb.from('ambiente').upsert(
-    AMBIENTES.map((a) => ({ ...a, codigo_qr: `SENA-AMB:${a.codigo}` })),
-    { onConflict: 'codigo' }
-  );
-  if (errAmb) throw new Error(`Ambientes: ${errAmb.message}`);
+  for (const a of AMBIENTES) {
+    await pool.query(
+      `insert into ambiente (codigo, nombre, tipo, bloque, piso, codigo_qr)
+       values ($1, $2, $3, $4, $5, $6)
+       on conflict (codigo) do update
+         set nombre = excluded.nombre,
+             tipo = excluded.tipo,
+             bloque = excluded.bloque,
+             piso = excluded.piso,
+             codigo_qr = excluded.codigo_qr`,
+      [a.codigo, a.nombre, a.tipo, a.bloque, a.piso, `SENA-AMB:${a.codigo}`]
+    );
+  }
   console.log(`✓ ${AMBIENTES.length} ambientes`);
 
-  // Configuración
-  const { error: errCfg } = await sb.from('configuracion').upsert(
-    [
-      {
-        clave: 'centro',
-        valor: 'CENTRO DE GESTIÓN AGROEMPRESARIAL DEL ORIENTE - VÉLEZ',
-        descripcion: 'Nombre oficial del centro de formación',
-      },
-      {
-        clave: 'sistema',
-        valor: 'Control de Ambientes de Formación',
-        descripcion: 'Nombre del sistema',
-      },
-    ],
-    { onConflict: 'clave' }
-  );
-  if (errCfg) throw new Error(`Configuración: ${errCfg.message}`);
+  const CONFIG = [
+    {
+      clave: 'centro',
+      valor: 'CENTRO DE GESTIÓN AGROEMPRESARIAL DEL ORIENTE - VÉLEZ',
+      descripcion: 'Nombre oficial del centro de formación',
+    },
+    {
+      clave: 'sistema',
+      valor: 'Control de Ambientes de Formación',
+      descripcion: 'Nombre del sistema',
+    },
+  ];
+
+  for (const c of CONFIG) {
+    await pool.query(
+      `insert into configuracion (clave, valor, descripcion)
+       values ($1, $2, $3)
+       on conflict (clave) do update
+         set valor = excluded.valor,
+             descripcion = excluded.descripcion`,
+      [c.clave, c.valor, c.descripcion]
+    );
+  }
   console.log('✓ configuración del centro');
 
   // Usuario administrador
@@ -168,18 +196,10 @@ async function main() {
   const pin = process.env.ADMIN_PIN || '1234';
   const nombreCompleto = process.env.ADMIN_NOMBRE || 'Administrador SENA';
 
-  const { data: rolAdmin, error: errRolAdmin } = await sb
-    .from('rol')
-    .select('id')
-    .eq('nombre', 'administrador')
-    .single();
-  if (errRolAdmin) throw new Error(`Rol administrador: ${errRolAdmin.message}`);
+  const rolAdmin = await uno('select id from rol where nombre = $1', ['administrador']);
+  if (!rolAdmin) throw new Error('No se encontró el rol administrador');
 
-  const { data: existente } = await sb
-    .from('usuario')
-    .select('id, username')
-    .eq('username', username)
-    .maybeSingle();
+  const existente = await uno('select id, username from usuario where username = $1', [username]);
 
   if (existente && process.env.RESET_PIN !== '1') {
     console.log(`• El usuario "${username}" ya existe (no se cambió el PIN).`);
@@ -189,30 +209,26 @@ async function main() {
     const nombres = partes[0];
     const apellidos = partes.slice(1).join(' ') || 'SENA';
 
-    const { data: persona, error: errPersona } = await sb
-      .from('persona')
-      .insert({ nombres, apellidos, tipo_persona: 'funcionario' })
-      .select('id')
-      .single();
-    if (errPersona) throw new Error(`Persona: ${errPersona.message}`);
-
     const pinHash = await bcrypt.hash(pin, 10);
 
     if (existente) {
-      const { error: errUpd } = await sb
-        .from('usuario')
-        .update({ pin_hash: pinHash, rol_id: rolAdmin.id, activo: true })
-        .eq('id', existente.id);
-      if (errUpd) throw new Error(`Usuario: ${errUpd.message}`);
+      await pool.query(
+        'update usuario set pin_hash = $2, rol_id = $3, activo = true where id = $1',
+        [existente.id, pinHash, rolAdmin.id]
+      );
       console.log(`✓ PIN de "${username}" restablecido`);
     } else {
-      const { error: errUser } = await sb.from('usuario').insert({
-        persona_id: persona.id,
-        username,
-        pin_hash: pinHash,
-        rol_id: rolAdmin.id,
-      });
-      if (errUser) throw new Error(`Usuario: ${errUser.message}`);
+      const persona = await uno(
+        `insert into persona (nombres, apellidos, tipo_persona)
+         values ($1, $2, 'funcionario') returning id`,
+        [nombres, apellidos]
+      );
+
+      await pool.query(
+        `insert into usuario (persona_id, username, pin_hash, rol_id)
+         values ($1, $2, $3, $4)`,
+        [persona.id, username, pinHash, rolAdmin.id]
+      );
       console.log(`✓ usuario "${username}" creado con rol administrador`);
     }
   }
@@ -223,12 +239,13 @@ async function main() {
   console.log(`  PIN:     ${process.env.RESET_PIN === '1' || !existente ? pin : '(el que ya tenías)'}`);
   console.log('──────────────────────────────────────────────');
   console.log('  ⚠ Cambia el PIN después del primer ingreso.');
-  console.log('  ⚠ Crea el bucket "firmas" en Supabase Storage (público)');
-  console.log('    para guardar las firmas como archivo.');
+  console.log('  ⚠ Las firmas se guardan dentro de la base (columna firma_url).');
   console.log('──────────────────────────────────────────────\n');
 }
 
-main().catch((e) => {
-  console.error('\n❌ Error:', e.message || e);
-  process.exit(1);
-});
+main()
+  .catch((e) => {
+    console.error('\n❌ Error:', e.message || e);
+    process.exitCode = 1;
+  })
+  .finally(() => pool.end());

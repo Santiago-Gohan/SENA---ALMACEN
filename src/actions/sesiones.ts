@@ -3,7 +3,7 @@
 import { createHash } from 'crypto';
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
-import { db, mensajeError } from '@/lib/supabase';
+import { ejecutar, mensajeError, q, uno } from '@/lib/db';
 import { requireSession } from '@/lib/auth';
 import { norm, hoyISO } from '@/lib/utils';
 
@@ -18,23 +18,21 @@ function entero(v: FormDataEntryValue | null): number | null {
   return Number.isFinite(n) ? Math.trunc(n) : null;
 }
 
-async function resolverInstructor(
-  sb: ReturnType<typeof db>,
-  nombreRaw: string,
-  crearSiFalta: boolean
-): Promise<string | null> {
+async function resolverInstructor(nombreRaw: string, crearSiFalta: boolean): Promise<string | null> {
   const nombre = nombreRaw.replace(/\s+/g, ' ').trim();
   if (!nombre) return null;
 
-  const { data: personas } = await sb
-    .from('persona')
-    .select('id, nombres, apellidos')
-    .in('tipo_persona', ['instructor', 'funcionario', 'contratista'])
-    .limit(2000);
+  const personas = await q<any>(
+    `select id, nombres, apellidos
+       from persona
+      where tipo_persona = any($1)
+      limit 2000`,
+    [['instructor', 'funcionario', 'contratista']]
+  );
 
   const objetivo = norm(nombre);
-  const encontrada = (personas || []).find(
-    (p: any) => norm(`${p.nombres ?? ''} ${p.apellidos ?? ''}`) === objetivo
+  const encontrada = personas.find(
+    (p) => norm(`${p.nombres ?? ''} ${p.apellidos ?? ''}`) === objetivo
   );
   if (encontrada) return encontrada.id;
   if (!crearSiFalta) return null;
@@ -43,67 +41,45 @@ async function resolverInstructor(
   const apellidos = partes.length >= 3 ? partes.slice(-2).join(' ') : partes[1] ?? '';
   const nombres = partes.length >= 3 ? partes.slice(0, -2).join(' ') : partes[0];
 
-  const { data: nueva, error } = await sb
-    .from('persona')
-    .insert({ nombres, apellidos, tipo_persona: 'instructor' })
-    .select('id')
-    .single();
+  const nueva = await uno<{ id: string }>(
+    `insert into persona (nombres, apellidos, tipo_persona)
+     values ($1, $2, 'instructor') returning id`,
+    [nombres, apellidos]
+  );
 
-  if (error) throw new Error(error.message);
+  if (!nueva) throw new Error('No se pudo crear el instructor');
   return nueva.id;
 }
 
-async function buscarAmbientePorCodigo(
-  sb: ReturnType<typeof db>,
-  raw: string
-): Promise<any | null> {
+async function buscarAmbientePorCodigo(raw: string): Promise<any | null> {
   const codigo = raw.replace(/^SENA-AMB:/i, '').trim();
   if (!codigo) return null;
 
-  const { data: porCodigo } = await sb
-    .from('ambiente')
-    .select('id, codigo, nombre, activo')
-    .eq('codigo', codigo)
-    .maybeSingle();
+  const porCodigo = await uno<any>(
+    'select id, codigo, nombre, activo from ambiente where codigo = $1',
+    [codigo]
+  );
   if (porCodigo) return porCodigo;
 
   const limpio = codigo.replace(/[%,()]/g, ' ').trim();
   if (!limpio) return null;
 
-  const { data: porNombre } = await sb
-    .from('ambiente')
-    .select('id, codigo, nombre, activo')
-    .ilike('nombre', `%${limpio}%`)
-    .limit(1)
-    .maybeSingle();
-
-  return porNombre ?? null;
+  return uno<any>(
+    'select id, codigo, nombre, activo from ambiente where nombre ilike $1 limit 1',
+    [`%${limpio}%`]
+  );
 }
 
-async function guardarFirma(
-  sb: ReturnType<typeof db>,
-  dataUrl: string
-): Promise<{ url: string | null; hash: string | null }> {
+/**
+ * Guarda la firma como dataURL dentro de la misma fila (columna text).
+ * No se usa almacenamiento externo: así el respaldo viaja con la base.
+ */
+async function guardarFirma(dataUrl: string): Promise<{ url: string | null; hash: string | null }> {
   const m = dataUrl.match(/^data:image\/(png|jpeg|jpg);base64,(.+)$/);
   if (!m) return { url: null, hash: null };
 
   const buffer = Buffer.from(m[2], 'base64');
   const hash = createHash('sha256').update(buffer).digest('hex');
-  const path = `sesiones/${Date.now()}-${hash.slice(0, 12)}.png`;
-
-  try {
-    const { error } = await sb.storage
-      .from('firmas')
-      .upload(path, buffer, { contentType: 'image/png', upsert: false });
-
-    if (!error) {
-      const { data } = sb.storage.from('firmas').getPublicUrl(path);
-      if (data?.publicUrl) return { url: data.publicUrl, hash };
-    }
-  } catch {
-    // Si el bucket no existe todavía, se guarda la firma en la base.
-  }
-
   return { url: dataUrl, hash };
 }
 
@@ -135,20 +111,16 @@ export async function abrirSesion(formData: FormData): Promise<void> {
   let error = '';
 
   try {
-    const sb = db();
-
     let ambiente: any = null;
 
     if (ambienteCodigo) {
-      ambiente = await buscarAmbientePorCodigo(sb, ambienteCodigo);
+      ambiente = await buscarAmbientePorCodigo(ambienteCodigo);
     }
     if (!ambiente && ambienteId) {
-      const { data } = await sb
-        .from('ambiente')
-        .select('id, codigo, nombre, activo')
-        .eq('id', ambienteId)
-        .maybeSingle();
-      ambiente = data;
+      ambiente = await uno<any>(
+        'select id, codigo, nombre, activo from ambiente where id = $1',
+        [ambienteId]
+      );
     }
 
     if (!ambiente) {
@@ -156,59 +128,57 @@ export async function abrirSesion(formData: FormData): Promise<void> {
     }
     if (!ambiente.activo) throw new Error('El ambiente está inactivo');
 
-    const { data: ficha, error: errFicha } = await sb
-      .from('ficha')
-      .select('id, codigo, programa_id, activa')
-      .eq('codigo', fichaCodigo)
-      .maybeSingle();
-    if (errFicha) throw new Error(errFicha.message);
+    const ficha = await uno<any>(
+      'select id, codigo, programa_id, activa from ficha where codigo = $1',
+      [fichaCodigo]
+    );
     if (!ficha) throw new Error(`La ficha ${fichaCodigo} no está registrada. Créala antes de usarla.`);
     if (!ficha.activa) throw new Error(`La ficha ${fichaCodigo} está inactiva`);
 
     const programaId = programaForm ?? ficha.programa_id;
     if (!programaId) throw new Error('La ficha no tiene programa de formación asignado');
 
-    const instructorId = await resolverInstructor(sb, instructorNombre, true);
+    const instructorId = await resolverInstructor(instructorNombre, true);
     if (!instructorId) throw new Error('No se pudo identificar al instructor');
 
-    const { data: abierta } = await sb
-      .from('sesion_ambiente')
-      .select('id')
-      .eq('ambiente_id', ambiente.id)
-      .eq('instructor_id', instructorId)
-      .is('hora_salida', null)
-      .maybeSingle();
+    const abierta = await uno(
+      `select id from sesion_ambiente
+        where ambiente_id = $1 and instructor_id = $2 and hora_salida is null`,
+      [ambiente.id, instructorId]
+    );
     if (abierta) throw new Error('Ese instructor ya tiene una sesión abierta en este ambiente');
 
-    const firmaGuardada = firma ? await guardarFirma(sb, firma) : { url: null, hash: null };
+    const firmaGuardada = firma ? await guardarFirma(firma) : { url: null, hash: null };
 
-    const { error: errIns } = await sb.from('sesion_ambiente').insert({
-      ambiente_id: ambiente.id,
-      instructor_id: instructorId,
-      ficha_id: ficha.id,
-      programa_id: programaId,
-      instructor_texto_original: instructorNombre,
-      ficha_texto_original: fichaCodigo,
-      ambiente_texto_original: `${ambiente.codigo} - ${ambiente.nombre}`,
-      fecha: hoyISO(),
-      hora_entrada: new Date().toISOString(),
-      estado: 'abierta',
-      firma_url: firmaGuardada.url,
-      firma_hash: firmaGuardada.hash,
-      firma_metodo: firma ? 'canvas' : 'ninguna',
-      observaciones: observaciones || null,
-      origen: 'digital',
-      registrado_por: usuario.id,
-    });
+    await q(
+      `insert into sesion_ambiente
+         (ambiente_id, instructor_id, ficha_id, programa_id,
+          instructor_texto_original, ficha_texto_original, ambiente_texto_original,
+          fecha, hora_entrada, estado, firma_url, firma_hash, firma_metodo,
+          observaciones, origen, registrado_por)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, now(), 'abierta', $9, $10, $11, $12, 'digital', $13)`,
+      [
+        ambiente.id,
+        instructorId,
+        ficha.id,
+        programaId,
+        instructorNombre,
+        fichaCodigo,
+        `${ambiente.codigo} - ${ambiente.nombre}`,
+        hoyISO(),
+        firmaGuardada.url,
+        firmaGuardada.hash,
+        firma ? 'canvas' : 'ninguna',
+        observaciones || null,
+        usuario.id,
+      ]
+    );
 
-    if (errIns) throw new Error(errIns.message);
-
-    await sb.from('auditoria').insert({
-      usuario_id: usuario.id,
-      accion: 'abrir_sesion',
-      entidad: 'sesion_ambiente',
-      entidad_id: `${ambiente.codigo}/${fichaCodigo}`,
-    });
+    await q(
+      `insert into auditoria (usuario_id, accion, entidad, entidad_id)
+       values ($1, $2, $3, $4)`,
+      [usuario.id, 'abrir_sesion', 'sesion_ambiente', `${ambiente.codigo}/${fichaCodigo}`]
+    );
 
     revalidatePath('/acceso');
     revalidatePath('/');
@@ -232,46 +202,35 @@ export async function cerrarSesion(formData: FormData): Promise<void> {
   let error = '';
 
   try {
-    const sb = db();
-
-    const { data: sesion, error: errSes } = await sb
-      .from('sesion_ambiente')
-      .select('id, hora_entrada, hora_salida, ambiente_id')
-      .eq('id', id)
-      .single();
-    if (errSes || !sesion) throw new Error('La sesión no existe');
+    const sesion = await uno<any>(
+      'select id, hora_entrada, hora_salida, ambiente_id from sesion_ambiente where id = $1',
+      [id]
+    );
+    if (!sesion) throw new Error('La sesión no existe');
     if (sesion.hora_salida) throw new Error('Esa sesión ya está cerrada');
 
     const conNovedad = Boolean(tipoNovedad);
 
-    const { error: errUpd } = await sb
-      .from('sesion_ambiente')
-      .update({
-        hora_salida: new Date().toISOString(),
-        estado: conNovedad ? 'con_novedad' : 'cerrada',
-        observaciones: observaciones || null,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', id);
-    if (errUpd) throw new Error(errUpd.message);
+    await ejecutar(
+      `update sesion_ambiente
+          set hora_salida = now(), estado = $2, observaciones = $3, updated_at = now()
+        where id = $1`,
+      [id, conNovedad ? 'con_novedad' : 'cerrada', observaciones || null]
+    );
 
     if (conNovedad) {
-      const { error: errNov } = await sb.from('novedad').insert({
-        sesion_id: id,
-        tipo: tipoNovedad,
-        descripcion: observaciones || 'Novedad reportada al cierre de la sesión',
-        estado: 'abierta',
-        creado_por: usuario.id,
-      });
-      if (errNov) throw new Error(errNov.message);
+      await q(
+        `insert into novedad (sesion_id, tipo, descripcion, estado, creado_por)
+         values ($1, $2, $3, 'abierta', $4)`,
+        [id, tipoNovedad, observaciones || 'Novedad reportada al cierre de la sesión', usuario.id]
+      );
     }
 
-    await sb.from('auditoria').insert({
-      usuario_id: usuario.id,
-      accion: 'cerrar_sesion',
-      entidad: 'sesion_ambiente',
-      entidad_id: String(id),
-    });
+    await q(
+      `insert into auditoria (usuario_id, accion, entidad, entidad_id)
+       values ($1, $2, $3, $4)`,
+      [usuario.id, 'cerrar_sesion', 'sesion_ambiente', String(id)]
+    );
   } catch (e) {
     error = mensajeError(e);
   }

@@ -2,7 +2,7 @@
 
 import { redirect } from 'next/navigation';
 import { createSession, destroySession, verifyLogin } from '@/lib/auth';
-import { mensajeError } from '@/lib/supabase';
+import { mensajeError } from '@/lib/db';
 
 export async function loginAction(formData: FormData): Promise<void> {
   const username = String(formData.get('username') || '').trim();

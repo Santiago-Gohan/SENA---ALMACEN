@@ -1,6 +1,6 @@
 -- ============================================================
---  SENA · Almacén — Esquema MVP Fase 1
---  Ejecutar en Supabase -> SQL Editor -> New query
+--  SENA · Almacén — Esquema MVP Fase 1 (PostgreSQL / Neon)
+--  Aplicar con:  npm run db:setup
 -- ============================================================
 
 create extension if not exists "pgcrypto";
@@ -287,22 +287,3 @@ create index if not exists idx_sesion_abierta    on sesion_ambiente(ambiente_id)
 create index if not exists idx_novedad_estado    on novedad(estado) where estado <> 'cerrada';
 create index if not exists idx_mision_persona    on mision_restauracion(persona_id, estado);
 create index if not exists idx_stg_estado        on stg_planilla_papel(estado_validacion);
-
--- ------------------------- RLS -------------------------
--- El servidor usa la service_role key (bypassa RLS).
--- El cliente NO accede directo a la base.
-do $$
-declare r record;
-begin
-  for r in select tablename from pg_tables where schemaname = 'public'
-  loop
-    execute format('alter table public.%I enable row level security', r.tablename);
-  end loop;
-end $$;
-
--- ------------------------- STORAGE -------------------------
--- Bucket público para las firmas de los instructores.
--- Si no existe, la app guarda la firma dentro de la base (respaldo).
-insert into storage.buckets (id, name, public)
-values ('firmas', 'firmas', true)
-on conflict (id) do nothing;

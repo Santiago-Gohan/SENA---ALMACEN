@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { requireSession } from '@/lib/auth';
-import { db, dbConfigurada, mensajeError } from '@/lib/supabase';
+import { dbConfigurada, mensajeError, q, uno } from '@/lib/db';
 import {
   TIPOS_AMBIENTE,
   claseBadge,
@@ -37,31 +37,44 @@ export default async function AmbienteDetallePage({
   let error = '';
 
   try {
-    const sb = db();
-
     const [res, resObj, resSes] = await Promise.all([
-      sb.from('ambiente').select('*').eq('id', id).maybeSingle(),
-      sb
-        .from('objeto')
-        .select('id, codigo_interno, nombre, estado, es_sp, placa:placa_id(valor)')
-        .eq('ambiente_id', id)
-        .eq('activo', true)
-        .order('nombre')
-        .limit(200),
-      sb
-        .from('sesion_ambiente')
-        .select(
-          'id, fecha, hora_entrada, hora_salida, estado, instructor:instructor_id(nombres, apellidos), ficha:ficha_id(codigo)'
-        )
-        .eq('ambiente_id', id)
-        .order('hora_entrada', { ascending: false })
-        .limit(12),
+      uno<any>('select * from ambiente where id = $1', [id]),
+      q<any>(
+        `select o.id, o.codigo_interno, o.nombre, o.estado, o.es_sp,
+                pl.valor as placa_valor
+           from objeto o
+           left join placa pl on pl.id = o.placa_id
+          where o.ambiente_id = $1 and o.activo
+          order by o.nombre
+          limit 200`,
+        [id]
+      ),
+      q<any>(
+        `select s.id, s.fecha, s.hora_entrada, s.hora_salida, s.estado,
+                p.nombres as instructor_nombres, p.apellidos as instructor_apellidos,
+                f.codigo as ficha_codigo
+           from sesion_ambiente s
+           left join persona p on p.id = s.instructor_id
+           left join ficha f on f.id = s.ficha_id
+          where s.ambiente_id = $1
+          order by s.hora_entrada desc
+          limit 12`,
+        [id]
+      ),
     ]);
 
-    if (res.error) throw new Error(res.error.message);
-    ambiente = res.data;
-    objetos = resObj.data || [];
-    sesiones = resSes.data || [];
+    ambiente = res;
+    objetos = resObj.map((o) => ({
+      ...o,
+      placa: o.placa_valor ? { valor: o.placa_valor } : null,
+    }));
+    sesiones = resSes.map((s) => ({
+      ...s,
+      instructor: s.instructor_nombres
+        ? { nombres: s.instructor_nombres, apellidos: s.instructor_apellidos }
+        : null,
+      ficha: s.ficha_codigo ? { codigo: s.ficha_codigo } : null,
+    }));
   } catch (e) {
     error = mensajeError(e);
   }

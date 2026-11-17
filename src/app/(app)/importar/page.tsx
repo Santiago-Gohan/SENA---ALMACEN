@@ -1,5 +1,5 @@
 import { requireAdmin } from '@/lib/auth';
-import { db, dbConfigurada, mensajeError } from '@/lib/supabase';
+import { dbConfigurada, mensajeError, q } from '@/lib/db';
 import { claseBadge, titulo } from '@/lib/utils';
 import {
   cargarPlanilla,
@@ -27,19 +27,19 @@ export default async function ImportarPage({ searchParams }: { searchParams: SP 
   let error = '';
 
   try {
-    const sb = db();
-
     const [resEstados, resFilas] = await Promise.all([
-      sb.from('stg_planilla_papel').select('estado_validacion').limit(5000),
-      sb.from('stg_planilla_papel').select('*').order('id', { ascending: false }).limit(50),
+      q<any>(
+        `select estado_validacion, count(*)::int as total
+           from stg_planilla_papel
+          group by estado_validacion`
+      ),
+      q<any>('select * from stg_planilla_papel order by id desc limit 50'),
     ]);
 
-    if (resEstados.error) throw new Error(resEstados.error.message);
-
-    for (const r of (resEstados.data || []) as any[]) {
-      conteo[r.estado_validacion] = (conteo[r.estado_validacion] || 0) + 1;
+    for (const r of resEstados) {
+      conteo[r.estado_validacion] = r.total;
     }
-    filas = resFilas.data || [];
+    filas = resFilas;
   } catch (e) {
     error = mensajeError(e);
   }
