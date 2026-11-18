@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { ejecutar, mensajeError, q, uno } from '@/lib/db';
-import { requireSession } from '@/lib/auth';
+import { requirePermiso } from '@/lib/auth';
 import { normalizarFicha } from '@/lib/utils';
 
 function texto(v: FormDataEntryValue | null): string {
@@ -18,7 +18,7 @@ function entero(v: FormDataEntryValue | null): number | null {
 }
 
 export async function crearFicha(formData: FormData): Promise<void> {
-  const usuario = await requireSession();
+  const usuario = await requirePermiso('fichas_editar');
   const codigo = normalizarFicha(texto(formData.get('codigo')));
   const programaId = entero(formData.get('programa_id'));
   const jornada = texto(formData.get('jornada')) || 'mañana';
@@ -58,7 +58,7 @@ export async function crearFicha(formData: FormData): Promise<void> {
 }
 
 export async function cambiarEstadoFicha(formData: FormData): Promise<void> {
-  await requireSession();
+  await requirePermiso('fichas_editar');
   const id = entero(formData.get('id'));
   const activa = texto(formData.get('activa')) === 'true';
   if (!id) redirect('/fichas?error=' + encodeURIComponent('Ficha inválida'));
@@ -79,7 +79,7 @@ export async function cambiarEstadoFicha(formData: FormData): Promise<void> {
 }
 
 export async function crearPrograma(formData: FormData): Promise<void> {
-  const usuario = await requireSession();
+  const usuario = await requirePermiso('fichas_editar');
   const codigo = texto(formData.get('codigo'));
   const nombre = texto(formData.get('nombre'));
   const nivel = texto(formData.get('nivel')) || 'tecnologo';

@@ -4,7 +4,7 @@ import { createHash } from 'crypto';
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { ejecutar, mensajeError, q, uno } from '@/lib/db';
-import { requireSession } from '@/lib/auth';
+import { requirePermiso } from '@/lib/auth';
 import { norm, hoyISO } from '@/lib/utils';
 
 function texto(v: FormDataEntryValue | null): string {
@@ -84,7 +84,7 @@ async function guardarFirma(dataUrl: string): Promise<{ url: string | null; hash
 }
 
 export async function abrirSesion(formData: FormData): Promise<void> {
-  const usuario = await requireSession();
+  const usuario = await requirePermiso('sesiones');
 
   const ambienteId = entero(formData.get('ambiente_id'));
   const ambienteCodigo = texto(formData.get('ambiente_codigo'));
@@ -192,7 +192,7 @@ export async function abrirSesion(formData: FormData): Promise<void> {
 }
 
 export async function cerrarSesion(formData: FormData): Promise<void> {
-  const usuario = await requireSession();
+  const usuario = await requirePermiso('sesiones');
   const id = entero(formData.get('id'));
   const observaciones = texto(formData.get('observaciones'));
   const tipoNovedad = texto(formData.get('tipo_novedad'));

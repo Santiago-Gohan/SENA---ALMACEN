@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { ejecutar, mensajeError, q, uno } from '@/lib/db';
-import { requireSession } from '@/lib/auth';
+import { requirePermiso } from '@/lib/auth';
 import { norm, qrObjeto } from '@/lib/utils';
 
 function texto(v: FormDataEntryValue | null): string {
@@ -88,7 +88,7 @@ async function registrarHistorial(datos: {
 }
 
 export async function crearObjeto(formData: FormData): Promise<void> {
-  const usuario = await requireSession();
+  const usuario = await requirePermiso('inventario_editar');
   const nombre = texto(formData.get('nombre'));
 
   if (!nombre) {
@@ -167,7 +167,7 @@ export async function crearObjeto(formData: FormData): Promise<void> {
 }
 
 export async function actualizarObjeto(formData: FormData): Promise<void> {
-  const usuario = await requireSession();
+  const usuario = await requirePermiso('inventario_editar');
   const id = entero(formData.get('id'));
   if (!id) redirect('/inventario?error=' + encodeURIComponent('Objeto inválido'));
 
@@ -217,7 +217,7 @@ export async function actualizarObjeto(formData: FormData): Promise<void> {
 }
 
 export async function trasladarObjeto(formData: FormData): Promise<void> {
-  const usuario = await requireSession();
+  const usuario = await requirePermiso('inventario_editar');
   const id = entero(formData.get('id'));
   const destino = entero(formData.get('ambiente_destino_id'));
   if (!id || !destino) {
@@ -256,7 +256,7 @@ export async function trasladarObjeto(formData: FormData): Promise<void> {
 }
 
 export async function cambiarEstadoObjeto(formData: FormData): Promise<void> {
-  const usuario = await requireSession();
+  const usuario = await requirePermiso('inventario_editar');
   const id = entero(formData.get('id'));
   const estado = texto(formData.get('estado'));
   if (!id || !estado) redirect('/inventario?error=' + encodeURIComponent('Datos incompletos'));
@@ -292,7 +292,7 @@ export async function cambiarEstadoObjeto(formData: FormData): Promise<void> {
 }
 
 export async function darDeBajaObjeto(formData: FormData): Promise<void> {
-  const usuario = await requireSession();
+  const usuario = await requirePermiso('inventario_editar');
   const id = entero(formData.get('id'));
   if (!id) redirect('/inventario?error=' + encodeURIComponent('Objeto inválido'));
 

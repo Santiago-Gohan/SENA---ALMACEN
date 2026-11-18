@@ -154,6 +154,12 @@ export function parseQr(raw: string): { tipo: TipoQR; codigo: string } {
     };
   }
 
+  // QR nuevo de ambientes: URL corta /a/<codigo>
+  const urlAmbiente = s.match(/\/a\/([^/?#]+)/i);
+  if (urlAmbiente) {
+    return { tipo: 'ambiente', codigo: decodeURIComponent(urlAmbiente[1]) };
+  }
+
   const url = s.match(/\/(ambientes|inventario)\/([^/?#]+)/i);
   if (url) {
     return {

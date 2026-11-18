@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { requireSession } from '@/lib/auth';
+import { requirePermiso } from '@/lib/auth';
 import { dbConfigurada, mensajeError, q } from '@/lib/db';
 import { claseBadge, fmtFecha, fmtHora, hoyISO, titulo } from '@/lib/utils';
 import { abrirSesion, cerrarSesion } from '@/actions/sesiones';
@@ -13,7 +13,7 @@ export const dynamic = 'force-dynamic';
 type SP = { ok?: string; error?: string };
 
 export default async function AccesoPage({ searchParams }: { searchParams: SP }) {
-  await requireSession();
+  await requirePermiso('sesiones');
 
   if (!dbConfigurada()) return <SetupNotice />;
 

@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { ejecutar, mensajeError, q, uno } from '@/lib/db';
-import { requireSession } from '@/lib/auth';
+import { requirePermiso } from '@/lib/auth';
 import { qrAmbiente } from '@/lib/utils';
 
 function texto(v: FormDataEntryValue | null): string {
@@ -18,7 +18,7 @@ function entero(v: FormDataEntryValue | null): number | null {
 }
 
 export async function crearAmbiente(formData: FormData): Promise<void> {
-  const usuario = await requireSession();
+  const usuario = await requirePermiso('ambientes_editar');
   const codigo = texto(formData.get('codigo'));
   const nombre = texto(formData.get('nombre'));
 
@@ -63,7 +63,7 @@ export async function crearAmbiente(formData: FormData): Promise<void> {
 }
 
 export async function actualizarAmbiente(formData: FormData): Promise<void> {
-  await requireSession();
+  await requirePermiso('ambientes_editar');
   const id = entero(formData.get('id'));
   if (!id) redirect('/ambientes?error=' + encodeURIComponent('Ambiente inválido'));
 
@@ -94,7 +94,7 @@ export async function actualizarAmbiente(formData: FormData): Promise<void> {
 }
 
 export async function cambiarEstadoAmbiente(formData: FormData): Promise<void> {
-  await requireSession();
+  await requirePermiso('ambientes_editar');
   const id = entero(formData.get('id'));
   const activo = texto(formData.get('activo')) === 'true';
   if (!id) redirect('/ambientes?error=' + encodeURIComponent('Ambiente inválido'));

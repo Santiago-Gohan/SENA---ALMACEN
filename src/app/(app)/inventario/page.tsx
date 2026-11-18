@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { requireSession } from '@/lib/auth';
+import { requirePermiso } from '@/lib/auth';
 import { dbConfigurada, mensajeError, q } from '@/lib/db';
 import {
   CONDICIONES,
@@ -23,7 +23,7 @@ type SP = {
 };
 
 export default async function InventarioPage({ searchParams }: { searchParams: SP }) {
-  await requireSession();
+  await requirePermiso('inventario_ver');
 
   if (!dbConfigurada()) return <SetupNotice />;
 

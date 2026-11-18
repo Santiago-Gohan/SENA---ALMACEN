@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { requireSession } from '@/lib/auth';
+import { puede, requireSession } from '@/lib/auth';
 import { dbConfigurada, mensajeError, q } from '@/lib/db';
 import { claseBadge, fmtFecha, fmtHora, hoyISO, titulo } from '@/lib/utils';
 import SetupNotice from '@/components/SetupNotice';
@@ -121,12 +121,16 @@ export default async function PanelPage({ searchParams }: { searchParams: SP }) 
           </p>
         </div>
         <div className="row">
-          <Link className="btn" href="/inventario">
-            Ver inventario
-          </Link>
-          <Link className="btn btn-primary" href="/acceso">
-            + Registrar entrada
-          </Link>
+          {puede(usuario, 'inventario_ver') && (
+            <Link className="btn" href="/inventario">
+              Ver inventario
+            </Link>
+          )}
+          {puede(usuario, 'sesiones') && (
+            <Link className="btn btn-primary" href="/acceso">
+              + Registrar entrada
+            </Link>
+          )}
         </div>
       </div>
 

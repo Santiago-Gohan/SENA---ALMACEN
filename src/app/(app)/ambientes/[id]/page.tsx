@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { requireSession } from '@/lib/auth';
+import { requirePermiso } from '@/lib/auth';
 import { dbConfigurada, mensajeError, q, uno } from '@/lib/db';
 import {
   TIPOS_AMBIENTE,
@@ -24,7 +24,7 @@ export default async function AmbienteDetallePage({
   params: { id: string };
   searchParams: SP;
 }) {
-  await requireSession();
+  await requirePermiso('ambientes_ver');
 
   if (!dbConfigurada()) return <SetupNotice />;
 
@@ -341,3 +341,4 @@ export default async function AmbienteDetallePage({
     </>
   );
 }
+

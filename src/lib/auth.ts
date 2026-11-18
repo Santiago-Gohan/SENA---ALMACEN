@@ -69,6 +69,50 @@ export function esAdmin(usuario: SessionUser | null): boolean {
   return Boolean(usuario && (usuario.rol === 'administrador' || usuario.permisos?.admin === true));
 }
 
+/**
+ * Permisos del sistema (se guardan como booleanos en rol.permisos):
+ *
+ *  inventario_ver       Ver el inventario
+ *  inventario_editar    Crear, editar, trasladar y dar de baja objetos
+ *  ambientes_ver        Ver ambientes
+ *  ambientes_editar     Crear y editar ambientes
+ *  fichas_ver           Ver fichas y programas
+ *  fichas_editar        Crear y editar fichas y programas
+ *  sesiones             Registrar entrada/salida y cerrar sesiones
+ *  verificar            Diligenciar el inventario diario con los aprendices de turno
+ *  etiquetas            Imprimir etiquetas QR
+ *  importar             Importar la planilla de papel
+ *  usuarios             Gestionar usuarios y roles
+ *  config               Configuración del centro
+ */
+export type Permiso =
+  | 'inventario_ver'
+  | 'inventario_editar'
+  | 'ambientes_ver'
+  | 'ambientes_editar'
+  | 'fichas_ver'
+  | 'fichas_editar'
+  | 'sesiones'
+  | 'verificar'
+  | 'etiquetas'
+  | 'importar'
+  | 'usuarios'
+  | 'config';
+
+export function puede(usuario: SessionUser | null, permiso: Permiso): boolean {
+  if (!usuario) return false;
+  if (esAdmin(usuario)) return true;
+  return usuario.permisos?.[permiso] === true;
+}
+
+export async function requirePermiso(permiso: Permiso): Promise<SessionUser> {
+  const usuario = await requireSession();
+  if (!puede(usuario, permiso)) {
+    redirect('/?error=' + encodeURIComponent('Tu rol no tiene permiso para esa sección'));
+  }
+  return usuario;
+}
+
 export async function requireAdmin(): Promise<SessionUser> {
   const usuario = await requireSession();
   if (!esAdmin(usuario)) redirect('/?error=' + encodeURIComponent('Necesitas permisos de administrador'));

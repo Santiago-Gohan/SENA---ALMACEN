@@ -909,3 +909,147 @@ details.card[open] > summary {
     display: block;
   }
 }
+
+/* ----------------------------- Verificación por QR ----------------------------- */
+
+.qr-wrap {
+  max-width: 880px;
+  margin: 0 auto;
+  padding: 18px 16px 60px;
+}
+
+.qr-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 18px;
+  flex-wrap: wrap;
+}
+
+.qr-marca {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--tinta);
+}
+
+.qr-marca:hover {
+  text-decoration: none;
+}
+
+.qr-marca .logo {
+  width: 36px;
+  height: 36px;
+  font-size: 1rem;
+}
+
+.qr-marca strong {
+  display: block;
+  line-height: 1.1;
+}
+
+.qr-marca small {
+  display: block;
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.qr-rotulo {
+  margin: 0 0 4px;
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--verde-osc);
+}
+
+.qr-sesion {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  border-left: 4px solid var(--verde);
+  margin-bottom: 14px;
+}
+
+.qr-sesion .titulo {
+  font-weight: 700;
+  color: var(--tinta);
+}
+
+.qr-sesion .meta {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.qr-form h2 {
+  margin-bottom: 2px;
+}
+
+.check-lista {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.check-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--linea);
+  border-radius: 10px;
+  background: #fbfdfa;
+  cursor: pointer;
+}
+
+.check-item:hover {
+  border-color: #b9c9bd;
+  background: #f6fbf3;
+}
+
+.check-item input[type='checkbox'] {
+  width: 22px;
+  height: 22px;
+  accent-color: var(--verde);
+  flex: 0 0 auto;
+}
+
+.check-item .crece {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.92rem;
+}
+
+.qr-firma {
+  width: 96px;
+  height: auto;
+  max-height: 64px;
+  object-fit: contain;
+  border: 1px solid var(--linea);
+  border-radius: 8px;
+  background: #fff;
+  flex: 0 0 auto;
+}
+
+.qr-verificacion .titulo {
+  white-space: normal;
+}
+
+@media (max-width: 560px) {
+  .qr-wrap {
+    padding: 12px 12px 48px;
+  }
+
+  .qr-firma {
+    width: 72px;
+  }
+
+  .check-item .badge {
+    display: none;
+  }
+}
+

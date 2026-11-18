@@ -54,18 +54,61 @@ async function uno(texto, params = []) {
 const ROLES = [
   {
     nombre: 'administrador',
-    descripcion: 'Acceso total: inventario, ambientes, sesiones, importación y usuarios',
-    permisos: { admin: true, inventario: true, ambientes: true, sesiones: true, importar: true },
+    descripcion: 'Acceso total: inventario, ambientes, sesiones, usuarios, importación y configuración',
+    permisos: {
+      admin: true,
+      inventario_ver: true,
+      inventario_editar: true,
+      ambientes_ver: true,
+      ambientes_editar: true,
+      fichas_ver: true,
+      fichas_editar: true,
+      sesiones: true,
+      verificar: true,
+      etiquetas: true,
+      importar: true,
+      usuarios: true,
+      config: true,
+    },
   },
   {
-    nombre: 'almacenista',
-    descripcion: 'Gestiona inventario y consulta sesiones',
-    permisos: { admin: false, inventario: true, ambientes: true, sesiones: true, importar: false },
+    nombre: 'vigilancia',
+    descripcion: 'Portería: registra la entrada y la salida de los instructores en los ambientes',
+    permisos: {
+      admin: false,
+      inventario_ver: false,
+      inventario_editar: false,
+      ambientes_ver: true,
+      ambientes_editar: false,
+      fichas_ver: true,
+      fichas_editar: false,
+      sesiones: true,
+      verificar: false,
+      etiquetas: false,
+      importar: false,
+      usuarios: false,
+      config: false,
+    },
   },
   {
     nombre: 'instructor',
-    descripcion: 'Registra entrada y salida en los ambientes',
-    permisos: { admin: false, inventario: false, ambientes: false, sesiones: true, importar: false },
+    descripcion:
+      'Registra su entrada y salida, y diligencia el inventario diario con los 2 aprendices de turno',
+    permisos: {
+      admin: false,
+      inventario_ver: true,
+      inventario_editar: false,
+      ambientes_ver: true,
+      ambientes_editar: false,
+      fichas_ver: true,
+      fichas_editar: false,
+      sesiones: true,
+      verificar: true,
+      etiquetas: false,
+      importar: false,
+      usuarios: false,
+      config: false,
+    },
   },
 ];
 
@@ -115,7 +158,18 @@ async function main() {
       [rol.nombre, rol.descripcion, JSON.stringify(rol.permisos)]
     );
   }
-  console.log(`✓ ${ROLES.length} roles`);
+
+  // El sistema tiene exactamente 3 roles. Se eliminan los roles viejos que
+  // ya no se usan (por ejemplo "almacenista") solo si no tienen usuarios.
+  const nombresRoles = ROLES.map((r) => r.nombre);
+  const marcas = nombresRoles.map((_, i) => `$${i + 1}`).join(', ');
+  const borrados = await pool.query(
+    `delete from rol
+      where nombre not in (${marcas})
+        and not exists (select 1 from usuario u where u.rol_id = rol.id)`,
+    nombresRoles
+  );
+  console.log(`✓ ${ROLES.length} roles${borrados.rowCount ? ` (${borrados.rowCount} rol(es) viejo(s) eliminado(s))` : ''}`);
 
   for (const p of PROGRAMAS) {
     await pool.query(

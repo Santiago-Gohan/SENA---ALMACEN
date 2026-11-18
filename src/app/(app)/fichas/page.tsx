@@ -1,4 +1,4 @@
-import { requireSession } from '@/lib/auth';
+import { requirePermiso } from '@/lib/auth';
 import { dbConfigurada, mensajeError, q } from '@/lib/db';
 import { JORNADAS, claseBadge, titulo } from '@/lib/utils';
 import { cambiarEstadoFicha, crearFicha, crearPrograma } from '@/actions/fichas';
@@ -12,7 +12,7 @@ type SP = { ok?: string; error?: string };
 const NIVELES = ['tecnico', 'tecnologo', 'especializacion', 'curso'];
 
 export default async function FichasPage({ searchParams }: { searchParams: SP }) {
-  await requireSession();
+  await requirePermiso('fichas_ver');
 
   if (!dbConfigurada()) return <SetupNotice />;
 

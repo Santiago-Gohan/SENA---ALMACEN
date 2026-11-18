@@ -171,6 +171,30 @@ create unique index if not exists uq_sesion_digital
   on sesion_ambiente (ambiente_id, instructor_id, ficha_id, fecha, hora_entrada)
   where origen = 'digital';
 
+-- Aprendices de turno (los 2 que hacen el inventario del día)
+alter table sesion_ambiente add column if not exists aprendices text;
+
+-- ------------------------- VERIFICACIÓN DE INVENTARIO (QR) -------------------------
+create table if not exists verificacion (
+  id             uuid primary key default gen_random_uuid(),
+  sesion_id      bigint references sesion_ambiente(id) on delete cascade,
+  ambiente_id    int not null references ambiente(id),
+  momento        text not null check (momento in ('entrada','salida')),
+  todo_en_orden  boolean not null default true,
+  detalle        jsonb not null default '[]'::jsonb,
+  aprendices     text,
+  observaciones  text,
+  firma_url      text,
+  firma_hash     text,
+  firma_metodo   text not null default 'canvas'
+    check (firma_metodo in ('canvas','ninguna')),
+  registrado_por uuid references usuario(id),
+  created_at     timestamptz not null default now()
+);
+
+create index if not exists verificacion_sesion_idx on verificacion (sesion_id);
+create index if not exists verificacion_ambiente_idx on verificacion (ambiente_id, created_at desc);
+
 -- ------------------------- NOVEDADES Y MISIONES -------------------------
 create table if not exists novedad (
   id               bigserial primary key,

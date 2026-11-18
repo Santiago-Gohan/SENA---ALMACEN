@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { requireSession } from '@/lib/auth';
+import { puede, requirePermiso } from '@/lib/auth';
 import { dbConfigurada, mensajeError, q } from '@/lib/db';
 import { TIPOS_AMBIENTE, titulo } from '@/lib/utils';
 import { crearAmbiente } from '@/actions/ambientes';
@@ -11,7 +11,7 @@ export const dynamic = 'force-dynamic';
 type SP = { ok?: string; error?: string };
 
 export default async function AmbientesPage({ searchParams }: { searchParams: SP }) {
-  await requireSession();
+  const usuario = await requirePermiso('ambientes_ver');
 
   if (!dbConfigurada()) return <SetupNotice />;
 
@@ -198,9 +198,16 @@ export default async function AmbientesPage({ searchParams }: { searchParams: SP
                     )}
                   </td>
                   <td>
-                    <Link className="btn btn-sm" href={`/ambientes/${a.id}`}>
-                      Ver
-                    </Link>
+                    <div className="row" style={{ gap: 6 }}>
+                      <Link className="btn btn-sm" href={`/ambientes/${a.id}`}>
+                        Ver
+                      </Link>
+                      {puede(usuario, 'verificar') && a.activo && (
+                        <Link className="btn btn-sm btn-primary" href={`/a/${a.codigo}`}>
+                          Verificar
+                        </Link>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))

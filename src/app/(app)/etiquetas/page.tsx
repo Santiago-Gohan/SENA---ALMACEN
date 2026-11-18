@@ -1,5 +1,6 @@
 import Link from 'next/link';
-import { requireSession } from '@/lib/auth';
+import { headers } from 'next/headers';
+import { requirePermiso } from '@/lib/auth';
 import { dbConfigurada, mensajeError, q } from '@/lib/db';
 import { fmtFecha, hoyISO } from '@/lib/utils';
 import PrintButton from '@/components/PrintButton';
@@ -11,12 +12,20 @@ export const dynamic = 'force-dynamic';
 type SP = { tipo?: string; q?: string };
 
 export default async function EtiquetasPage({ searchParams }: { searchParams: SP }) {
-  await requireSession();
+  await requirePermiso('etiquetas');
 
   if (!dbConfigurada()) return <SetupNotice />;
 
   const tipo = searchParams.tipo === 'objetos' ? 'objetos' : 'ambientes';
   const busqueda = (searchParams.q || '').trim();
+
+  // Los QR de ambientes codifican una URL absoluta: al escanear con la cámara
+  // del celular se abre directamente /a/<codigo>.
+  const h = headers();
+  const host = h.get('x-forwarded-host') || h.get('host') || 'localhost:3000';
+  const proto =
+    h.get('x-forwarded-proto') || (host.startsWith('localhost') || host.startsWith('127.0.0.1') ? 'http' : 'https');
+  const baseUrl = `${proto}://${host}`;
 
   let items: any[] = [];
   let error = '';
@@ -122,7 +131,11 @@ export default async function EtiquetasPage({ searchParams }: { searchParams: SP
             <div className="etiqueta" key={it.id}>
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
-                src={`/api/qr?data=${encodeURIComponent(it.codigo_qr)}&size=240`}
+                src={`/api/qr?data=${encodeURIComponent(
+                  tipo === 'ambientes'
+                    ? `${baseUrl}/a/${encodeURIComponent(it.codigo)}`
+                    : it.codigo_qr
+                )}&size=240`}
                 alt={`QR ${tipo === 'ambientes' ? it.codigo : it.codigo_interno}`}
                 width={112}
                 height={112}
@@ -145,9 +158,9 @@ export default async function EtiquetasPage({ searchParams }: { searchParams: SP
 
       <p className="muted no-print" style={{ marginTop: 16 }}>
         <small>
-          Imprime en papel adhesivo o pega la etiqueta en el objeto. El QR codifica{' '}
-          <code>SENA-AMB:código</code> o <code>SENA-OBJ:código</code>, así el escáner sabe qué
-          abrir.
+          Imprime en papel adhesivo o pega la etiqueta en el objeto. El QR de cada ambiente abre{' '}
+          <code>{baseUrl}/a/código</code> al escanearlo con la cámara del celular; el de los objetos
+          codifica <code>SENA-OBJ:código</code>.
         </small>
       </p>
     </>

@@ -8,21 +8,32 @@ type Props = {
   usuario: { nombre: string; rol: string; permisos: Record<string, any> };
 };
 
-const ENLACES = [
+type Enlace = {
+  href: string;
+  etiqueta: string;
+  icono: string;
+  permiso?: string;
+};
+
+const ENLACES: Enlace[] = [
   { href: '/', etiqueta: 'Panel', icono: '◧' },
-  { href: '/inventario', etiqueta: 'Inventario', icono: '▤' },
-  { href: '/ambientes', etiqueta: 'Ambientes', icono: '⌂' },
-  { href: '/fichas', etiqueta: 'Fichas', icono: '#' },
-  { href: '/acceso', etiqueta: 'Acceso', icono: '⇄' },
-  { href: '/etiquetas', etiqueta: 'Etiquetas', icono: '▦' },
-  { href: '/importar', etiqueta: 'Importar', icono: '⇧', soloAdmin: true },
+  { href: '/inventario', etiqueta: 'Inventario', icono: '▤', permiso: 'inventario_ver' },
+  { href: '/ambientes', etiqueta: 'Ambientes', icono: '⌂', permiso: 'ambientes_ver' },
+  { href: '/fichas', etiqueta: 'Fichas', icono: '#', permiso: 'fichas_ver' },
+  { href: '/acceso', etiqueta: 'Acceso', icono: '⇄', permiso: 'sesiones' },
+  { href: '/etiquetas', etiqueta: 'Etiquetas', icono: '▦', permiso: 'etiquetas' },
+  { href: '/importar', etiqueta: 'Importar', icono: '⇧', permiso: 'importar' },
+  { href: '/usuarios', etiqueta: 'Usuarios', icono: '☺', permiso: 'usuarios' },
 ];
 
 export default function Nav({ usuario }: Props) {
   const pathname = usePathname() || '/';
   const admin = usuario.rol === 'administrador' || usuario.permisos?.admin === true;
 
-  const enlaces = ENLACES.filter((e) => !e.soloAdmin || admin);
+  const puede = (permiso?: string) =>
+    !permiso || admin || usuario.permisos?.[permiso] === true;
+
+  const enlaces = ENLACES.filter((e) => puede(e.permiso));
 
   return (
     <aside className="sidebar">
