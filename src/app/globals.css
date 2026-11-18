@@ -668,6 +668,39 @@ details.card[open] > summary {
   background: #fbfdfa;
 }
 
+.identidad-box {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  background: var(--verde-claro);
+  border: 1px solid #c6e8b3;
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+
+.opcion {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  border: 1px solid var(--linea);
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.opcion:hover {
+  border-color: var(--verde);
+}
+
+.opcion input[type='checkbox'],
+.opcion input[type='radio'] {
+  margin-top: 3px;
+  accent-color: var(--verde);
+}
+
 .firma-canvas {
   width: 100%;
   height: 165px;

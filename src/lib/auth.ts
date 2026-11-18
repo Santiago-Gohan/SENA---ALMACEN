@@ -7,7 +7,7 @@ import { q, uno } from './db';
 const COOKIE = 'sena_session';
 const MAX_AGE = 60 * 60 * 8; // 8 horas
 
-function secreto(): Uint8Array {
+export function secreto(): Uint8Array {
   const s = process.env.AUTH_SECRET || 'dev-secret-sena-almacen-cambiar-en-produccion';
   return new TextEncoder().encode(s);
 }
@@ -79,6 +79,7 @@ export function esAdmin(usuario: SessionUser | null): boolean {
  *  fichas_ver           Ver fichas y programas
  *  fichas_editar        Crear y editar fichas y programas
  *  sesiones             Registrar entrada/salida y cerrar sesiones
+ *  porteria             Prestar y devolver llaves de los ambientes
  *  verificar            Diligenciar el inventario diario con los aprendices de turno
  *  etiquetas            Imprimir etiquetas QR
  *  importar             Importar la planilla de papel
@@ -93,6 +94,7 @@ export type Permiso =
   | 'fichas_ver'
   | 'fichas_editar'
   | 'sesiones'
+  | 'porteria'
   | 'verificar'
   | 'etiquetas'
   | 'importar'

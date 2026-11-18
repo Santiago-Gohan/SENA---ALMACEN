@@ -21,9 +21,12 @@ const ENLACES: Enlace[] = [
   { href: '/ambientes', etiqueta: 'Ambientes', icono: '⌂', permiso: 'ambientes_ver' },
   { href: '/fichas', etiqueta: 'Fichas', icono: '#', permiso: 'fichas_ver' },
   { href: '/acceso', etiqueta: 'Acceso', icono: '⇄', permiso: 'sesiones' },
+  { href: '/porteria', etiqueta: 'Portería', icono: '🔑', permiso: 'porteria' },
+  { href: '/mi-huella', etiqueta: 'Mi huella', icono: '☝', permiso: 'verificar' },
   { href: '/etiquetas', etiqueta: 'Etiquetas', icono: '▦', permiso: 'etiquetas' },
   { href: '/importar', etiqueta: 'Importar', icono: '⇧', permiso: 'importar' },
   { href: '/usuarios', etiqueta: 'Usuarios', icono: '☺', permiso: 'usuarios' },
+  { href: '/configuracion', etiqueta: 'Configuración', icono: '⚙', permiso: 'config' },
 ];
 
 export default function Nav({ usuario }: Props) {

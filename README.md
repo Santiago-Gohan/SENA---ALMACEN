@@ -17,6 +17,8 @@ ambiente y con qué ficha.
 | **Ambientes** | Catálogo de aulas, talleres y laboratorios con su QR y capacidad. |
 | **Fichas y programas** | Catálogo formativo: crear fichas (7–8 dígitos) y programas, activarlas o desactivarlas sin tocar SQL. |
 | **Control de acceso** | Entrada y salida del instructor por ambiente, con ficha, programa y **firma digital**. |
+| **Portería** | Préstamo y devolución de la llave de cada ambiente: instructor, jornada, hora y método de identificación (huella o manual). |
+| **Huella (WebAuthn)** | Identificación del instructor con la huella del dispositivo, detrás de un interruptor del administrador. |
 | **Etiquetas** | Generación e impresión de etiquetas QR para ambientes y objetos. |
 | **Importar planilla** | Digitaliza la planilla de papel de 9 columnas sin perder el dato original (bandeja de staging + conciliación + migración). |
 | **Seguridad** | Login propio con usuario + PIN (bcrypt), sesión JWT en cookie httpOnly y roles. |
@@ -31,6 +33,7 @@ ambiente y con qué ficha.
 - **Vercel** (hosting)
 - CSS propio (sin frameworks)
 - `qrcode` (QR en PNG), `html5-qrcode` (lectura con cámara), `bcryptjs` + `jose` (auth)
+- `@simplewebauthn/server` + `@simplewebauthn/browser` (huella / Windows Hello / Touch ID)
 
 ---
 
@@ -39,14 +42,15 @@ ambiente y con qué ficha.
 ```
 sena-almacen/
 ├─ src/
-│  ├─ actions/           # server actions (auth, objetos, ambientes, fichas, sesiones, importar)
+│  ├─ actions/           # server actions (auth, objetos, ambientes, fichas, sesiones, portería, huella, importar)
 │  ├─ app/
-│  │  ├─ (app)/          # rutas protegidas: panel, inventario, ambientes, fichas, acceso, etiquetas, importar
+│  │  ├─ (app)/          # rutas protegidas: panel, inventario, ambientes, fichas, acceso, portería, mi-huella, configuración, etiquetas, importar
 │  │  ├─ api/qr/         # generador de QR (PNG)
+│  │  ├─ api/huella/     # opciones y verificación WebAuthn (registro e identificación)
 │  │  ├─ login/
 │  │  └─ globals.css
-│  ├─ components/        # Nav, ScanQR, FirmaPad, Alerta, AreaPlanilla...
-│  ├─ lib/               # db (pg), auth, utils
+│  ├─ components/        # Nav, ScanQR, FirmaPad, HuellaRegistro, HuellaIdentificar, Alerta, AreaPlanilla...
+│  ├─ lib/               # db (pg), auth, huella (WebAuthn), utils
 │  └─ middleware.ts      # protege todas las rutas
 ├─ db/schema.sql         # esquema completo (tablas e índices)
 ├─ scripts/db-setup.mjs  # aplica el esquema en la base
@@ -102,7 +106,7 @@ npm run seed       # roles, programas, ficha, categorías, ambientes y administr
 
 El seed crea:
 
-- 3 roles: `administrador`, `almacenista`, `instructor`
+- 3 roles: `administrador`, `vigilancia`, `instructor`
 - Programas: ADSO, Técnico en Sistemas, Técnico en Agropecuaria
 - Ficha de ejemplo: **3535013** (ADSO, mañana)
 - 8 categorías de inventario
@@ -185,9 +189,9 @@ Los tres roles del sistema son:
 
 | Rol | Puede hacer |
 |---|---|
-| `administrador` | Todo: inventario, ambientes, fichas, usuarios, importación y configuración. |
-| `vigilancia` | Registrar entrada y salida en portería; consultar ambientes y fichas. No ve inventario ni usuarios. |
-| `instructor` | Registrar su entrada/salida y verificar el inventario con los 2 aprendices de turno. No edita inventario ni usuarios. |
+| `administrador` | Todo: inventario, ambientes, fichas, portería, usuarios, importación y configuración. |
+| `vigilancia` | **Portería**: presta y recibe las llaves de los ambientes; consulta ambientes y fichas. No ve inventario ni usuarios. |
+| `instructor` | Solicita la llave en portería, registra su entrada/salida, inscribe su huella y verifica el inventario con los 2 aprendices de turno. No edita inventario ni usuarios. |
 
 > El menú lateral se arma según los permisos del rol. Si cambias el rol de una persona, debe cerrar
 > sesión y volver a entrar para que el menú y los permisos se actualicen.
@@ -226,6 +230,40 @@ Reglas:
 - La firma es obligatoria, salvo que se marque la excepción (queda registrada como `ninguna`).
 - Si el instructor no existe, se crea automáticamente para revisión posterior.
 
+### Portería: préstamo de llaves
+
+La portería **no** registra ingresos y salidas del centro en esta fase: solo controla la llave del
+ambiente que pide el instructor.
+
+1. Vigilancia abre **Portería** y selecciona el ambiente (por ejemplo `207 · Taller 207` o el área
+   ADSO) y la jornada: **Mañana (07:00–12:00)** o **Tarde (13:00–18:00)**.
+2. Identifica al instructor:
+   - **Con huella** (si el administrador la activó): el instructor valida Windows Hello, Touch ID o
+     el lector del celular. La huella reemplaza su firma.
+   - **Manual** (si no tiene huella o la función está apagada): se selecciona de la lista o se
+     escribe el nombre. Si no existe, se crea como persona tipo instructor.
+3. Pulsa **Registrar préstamo de llave**. Queda guardado ambiente, instructor, jornada, hora exacta
+   de préstamo, quién lo registró y el método de identificación.
+4. Cuando el instructor devuelve la llave, en **Llaves en portería** se registra la devolución
+   (normal o con novedad). Un ambiente no puede tener dos llaves prestadas al mismo tiempo.
+
+La tabla es `prestamo_llave`. La identidad por huella dura pocos minutos y es de un solo uso: al
+guardar el préstamo se borra, para que el siguiente instructor se identifique de nuevo.
+
+### Huella y el interruptor del administrador
+
+- Cada usuario inscribe su huella en **Mi huella**. No se almacena la huella: el dispositivo crea
+  una llave privada y el sistema solo guarda la llave pública (`credencial_huella`).
+- La función está **apagada por defecto**. El administrador la activa en **Configuración →
+  Identificación por huella**. Mientras esté apagada, portería usa el registro manual.
+- La identificación solo acepta instructores y administradores; vigilancia no puede solicitar
+  llaves con su propia huella.
+- WebAuthn exige HTTPS o `localhost`. En Vercel funciona con el dominio `*.vercel.app`; no funciona
+  por IP o LAN sin certificado. Si algún día se usa un dominio propio, se puede fijar con
+  `WEBAUTHN_RP_ID` y `WEBAUTHN_ORIGIN`.
+- La cookie de identidad (`sena_huella_identidad`) es httpOnly, dura unos 10 minutos y no reemplaza
+  la sesión de vigilancia.
+
 ### Importar la planilla de papel
 
 La planilla oficial tiene 9 columnas:
@@ -261,6 +299,8 @@ específicos (`fecha_invalida`, `hora_invalida`, `ficha_no_encontrada`, `instruc
 | `objeto_historial` | Creación, traslado, mantenimiento, baja, pérdida. |
 | `sesion_ambiente` | Una fila por sesión diaria: entrada, salida, firma, aprendices de turno y estado. |
 | `verificacion` | Verificación de inventario por QR: entrada/salida, checklist, 2 aprendices y firma. |
+| `prestamo_llave` | Préstamo y devolución de llaves: ambiente, instructor, jornada, horas, método y auditoría. |
+| `credencial_huella` | Llave pública WebAuthn de cada dispositivo (nunca la huella). |
 | `novedad` | Faltante, daño, sobrante o desorden detectado. |
 | `mision_restauracion` / `puntos_ecologicos` | Sanciones ecológicas (traer planta) sin dinero. |
 | `stg_planilla_papel` | Bandeja de digitalización del papel. |
@@ -283,7 +323,10 @@ El esquema completo está en `db/schema.sql`. Todas las fechas se manejan en
   expone a Internet, agrega *rate limiting* (por ejemplo en Vercel o un middleware con conteo por IP).
 - Antes de usar datos reales, informa a instructores y aprendices el tratamiento de sus datos y
   define quién es el responsable en el centro.
-- **Fase 2 (biometría)** requiere consentimiento explícito y medidas adicionales; no está incluida.
+- **Biometría (huella)**: es opcional y está apagada por defecto. El sistema no guarda la huella,
+  solo la llave pública WebAuthn del dispositivo, pero sigue siendo un dato sensible: requiere
+  autorización expresa del titular, aviso de privacidad y medidas de seguridad (Ley 1581 de 2012).
+  Actívala solo cuando el centro lo apruebe y documente.
 
 ---
 
@@ -299,8 +342,10 @@ El esquema completo está en `db/schema.sql`. Todas las fechas se manejan en
   pegado se procesa en memoria, así que evita pegar más de ~1 MB de una vez.
 - **Conciliación de programas**: si el nombre del programa escrito en el papel no coincide con el de
   la ficha, la fila queda en `programa_no_coincide` para revisión manual; no se adivina.
-- No incluye biometría ni sanciones automáticas: las misiones ecológicas quedan en el modelo de
-  datos para la siguiente fase.
+- No incluye sanciones automáticas: las misiones ecológicas quedan en el modelo de datos para la
+  siguiente fase.
+- La huella depende del dispositivo: si el equipo no tiene lector o el navegador no soporta
+  WebAuthn, usa el registro manual de portería. Un usuario puede inscribir varios dispositivos.
 - No hay generación de reportes en PDF/Excel todavía.
 
 ---
@@ -338,4 +383,4 @@ npm run hash 4321  # hash bcrypt de un PIN
 3. Check-in/check-out de objetos por QR con el aprendiz.
 4. Pantalla para que cada usuario cambie su propio PIN.
 5. Misiones ecológicas con evidencia fotográfica.
-6. Biometría (solo con consentimiento y cumplimiento de Ley 1581).
+6. Reporte de llaves prestadas por instructor y jornada.

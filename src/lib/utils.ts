@@ -55,6 +55,15 @@ export function fmtFechaHora(v?: string | null): string {
   return `${fmtFecha(v)} ${fmtHora(v)}`;
 }
 
+/** Hora de una columna TIME (07:00:00) sin pasarla por Date. */
+export function fmtHoraCorta(v?: string | null): string {
+  if (!v) return '—';
+  const s = String(v);
+  const m = s.match(/^(\d{1,2}):(\d{2})/);
+  if (!m) return fmtHora(s);
+  return `${m[1].padStart(2, '0')}:${m[2]}`;
+}
+
 /** Fecha de hoy en Colombia (UTC-5, sin horario de verano). */
 export function hoyISO(): string {
   return new Date(Date.now() - 5 * 3600 * 1000).toISOString().slice(0, 10);
@@ -223,6 +232,14 @@ export const CRITICIDADES = ['alta', 'media', 'baja'] as const;
 export const TIPOS_AMBIENTE = ['aula', 'taller', 'laboratorio', 'almacen', 'oficina', 'zona_comun'] as const;
 export const JORNADAS = ['mañana', 'tarde', 'noche', 'mixta'] as const;
 
+/** Jornadas de portería para el préstamo de llaves. */
+export const JORNADAS_PORTERIA = {
+  manana: { etiqueta: 'Mañana', inicio: '07:00', fin: '12:00', horario: '7:00 – 12:00' },
+  tarde: { etiqueta: 'Tarde', inicio: '13:00', fin: '18:00', horario: '1:00 – 6:00 p.m.' },
+} as const;
+
+export type JornadaPorteria = keyof typeof JORNADAS_PORTERIA;
+
 export function claseBadge(valor: string): string {
   switch (valor) {
     case 'disponible':
@@ -231,10 +248,12 @@ export function claseBadge(valor: string): string {
     case 'validada':
     case 'listo':
     case 'ok':
+    case 'devuelta':
       return 'badge ok';
     case 'en_uso':
     case 'abierta':
     case 'prestado':
+    case 'prestada':
     case 'entregada':
       return 'badge info';
     case 'mantenimiento':

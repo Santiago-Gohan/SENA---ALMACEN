@@ -54,7 +54,7 @@ async function uno(texto, params = []) {
 const ROLES = [
   {
     nombre: 'administrador',
-    descripcion: 'Acceso total: inventario, ambientes, sesiones, usuarios, importación y configuración',
+    descripcion: 'Acceso total: inventario, ambientes, sesiones, portería, usuarios, importación y configuración',
     permisos: {
       admin: true,
       inventario_ver: true,
@@ -64,6 +64,7 @@ const ROLES = [
       fichas_ver: true,
       fichas_editar: true,
       sesiones: true,
+      porteria: true,
       verificar: true,
       etiquetas: true,
       importar: true,
@@ -73,7 +74,7 @@ const ROLES = [
   },
   {
     nombre: 'vigilancia',
-    descripcion: 'Portería: registra la entrada y la salida de los instructores en los ambientes',
+    descripcion: 'Portería: presta las llaves de los ambientes y registra entrada/salida',
     permisos: {
       admin: false,
       inventario_ver: false,
@@ -83,6 +84,7 @@ const ROLES = [
       fichas_ver: true,
       fichas_editar: false,
       sesiones: true,
+      porteria: true,
       verificar: false,
       etiquetas: false,
       importar: false,
@@ -93,7 +95,7 @@ const ROLES = [
   {
     nombre: 'instructor',
     descripcion:
-      'Registra su entrada y salida, y diligencia el inventario diario con los 2 aprendices de turno',
+      'Solicita llaves en portería, registra su entrada/salida y diligencia el inventario diario',
     permisos: {
       admin: false,
       inventario_ver: true,
@@ -103,6 +105,7 @@ const ROLES = [
       fichas_ver: true,
       fichas_editar: false,
       sesiones: true,
+      porteria: false,
       verificar: true,
       etiquetas: false,
       importar: false,
@@ -243,6 +246,14 @@ async function main() {
       [c.clave, c.valor, c.descripcion]
     );
   }
+
+  // La huella se activa desde Configuración cuando el centro la apruebe.
+  // No se sobreescribe si ya existe: el seed no debe apagarla en cada corrida.
+  await pool.query(
+    `insert into configuracion (clave, valor, descripcion)
+     values ('huella_activa', '0', 'Permite identificar instructores con huella/WebAuthn en portería')
+     on conflict (clave) do nothing`
+  );
   console.log('✓ configuración del centro');
 
   // Usuario administrador

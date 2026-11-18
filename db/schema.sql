@@ -195,6 +195,56 @@ create table if not exists verificacion (
 create index if not exists verificacion_sesion_idx on verificacion (sesion_id);
 create index if not exists verificacion_ambiente_idx on verificacion (ambiente_id, created_at desc);
 
+-- ------------------------- PORTERÍA: LLAVES Y HUELLA -------------------------
+-- Credenciales WebAuthn. Nunca se guarda la huella: solo la llave pública que
+-- entrega el dispositivo (Windows Hello, Touch ID, lector del celular, etc.).
+create table if not exists credencial_huella (
+  id            uuid primary key default gen_random_uuid(),
+  usuario_id    uuid not null references usuario(id) on delete cascade,
+  credential_id text unique not null,
+  public_key    text not null,
+  counter       bigint not null default 0,
+  transports    text,
+  device_label  text,
+  created_at    timestamptz not null default now(),
+  last_used_at  timestamptz
+);
+
+create index if not exists credencial_huella_usuario_idx on credencial_huella (usuario_id);
+
+-- Préstamo de la llave de un ambiente. La jornada define el horario previsto
+-- (mañana 07:00–12:00 / tarde 13:00–18:00) y la hora real de entrega/devolución
+-- queda en hora_prestamo / hora_devolucion.
+create table if not exists prestamo_llave (
+  id                    bigserial primary key,
+  ambiente_id           int not null references ambiente(id),
+  instructor_id         uuid not null references persona(id),
+  usuario_id            uuid references usuario(id) on delete set null,
+  ficha_id              int references ficha(id),
+  fecha                 date not null,
+  jornada               text not null check (jornada in ('manana','tarde')),
+  hora_inicio           time not null,
+  hora_fin              time not null,
+  hora_prestamo         timestamptz not null default now(),
+  hora_devolucion       timestamptz,
+  estado                text not null default 'prestada'
+    check (estado in ('prestada','devuelta','novedad')),
+  metodo_identificacion text not null default 'manual'
+    check (metodo_identificacion in ('huella','manual')),
+  credencial_id         uuid references credencial_huella(id) on delete set null,
+  observaciones         text,
+  registrado_por        uuid references usuario(id),
+  created_at            timestamptz not null default now(),
+  updated_at            timestamptz not null default now(),
+  constraint ck_prestamo_horas check (hora_fin > hora_inicio)
+);
+
+-- Un ambiente solo puede tener una llave prestada a la vez.
+create unique index if not exists uq_prestamo_llave_abierta
+  on prestamo_llave (ambiente_id) where hora_devolucion is null;
+create index if not exists prestamo_llave_fecha_idx
+  on prestamo_llave (fecha desc);
+
 -- ------------------------- NOVEDADES Y MISIONES -------------------------
 create table if not exists novedad (
   id               bigserial primary key,
