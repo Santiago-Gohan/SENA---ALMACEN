@@ -157,7 +157,8 @@ Abre <http://localhost:3000> e ingresa con `admin` y tu PIN.
 ### Registrar ambientes y objetos
 
 1. **Ambientes → Crear ambiente**: código (`203`), nombre y tipo.
-2. **Etiquetas → Ambientes → Imprimir**: pega el QR en la puerta del ambiente.
+2. **Etiquetas → Ambientes → Imprimir**: pega el QR en la puerta del ambiente. El QR abre la hoja
+   de verificación `/a/<código>` al escanearlo con el celular.
 3. **Inventario → Registrar objeto**: nombre, placa (o `S/P`), categoría, ambiente.
 4. **Etiquetas → Objetos → Imprimir**: pega el QR en el equipo.
 
@@ -170,6 +171,44 @@ Abre <http://localhost:3000> e ingresa con `admin` y tu PIN.
 
 > Sin la ficha registrada y activa, el sistema rechaza el registro de entrada. Esta pantalla evita
 > tener que ejecutar SQL para cada ficha nueva.
+
+### Roles y usuarios
+
+Solo el administrador ve **Usuarios**. Desde ahí puede:
+
+1. **Crear usuario**: usuario, nombres, apellidos, rol y PIN inicial (4 a 8 dígitos).
+2. **Cambiar rol** con el selector de cada fila.
+3. **Activar / desactivar** la cuenta sin borrarla, para conservar la trazabilidad.
+4. **Resetear el PIN** cuando la persona lo olvide.
+
+Los tres roles del sistema son:
+
+| Rol | Puede hacer |
+|---|---|
+| `administrador` | Todo: inventario, ambientes, fichas, usuarios, importación y configuración. |
+| `vigilancia` | Registrar entrada y salida en portería; consultar ambientes y fichas. No ve inventario ni usuarios. |
+| `instructor` | Registrar su entrada/salida y verificar el inventario con los 2 aprendices de turno. No edita inventario ni usuarios. |
+
+> El menú lateral se arma según los permisos del rol. Si cambias el rol de una persona, debe cerrar
+> sesión y volver a entrar para que el menú y los permisos se actualicen.
+
+### Verificación de inventario por QR
+
+El QR de cada ambiente codifica la URL `https://tu-dominio/a/<código>`; al escanearlo con la cámara
+del celular se abre la hoja de verificación del ambiente.
+
+1. El instructor escanea el QR y entra con su usuario y PIN.
+2. Marca con ✓ los objetos que están en orden. Si algo falta o está dañado, deja el espacio sin
+   marcar y lo describe en observaciones.
+3. Escribe los nombres de los **2 aprendices de turno** (rotan según el aseo del día).
+4. Firma en pantalla y pulsa **Registrar entrada**.
+5. Al terminar la clase vuelve a escanear el QR, revisa el inventario, firma y pulsa
+   **Registrar salida**.
+
+La entrada y la salida quedan en la tabla `verificacion` con fecha, hora de Colombia, firma y
+auditoría. Si algún objeto quedó sin marcar, la sesión se cierra como `con_novedad` y se crea una
+novedad para seguimiento. Si vigilancia ya abrió la sesión en portería, el instructor puede
+verificar la entrada sobre esa misma sesión.
 
 ### Registrar entrada y salida
 
@@ -220,7 +259,8 @@ específicos (`fecha_invalida`, `hora_invalida`, `ficha_no_encontrada`, `instruc
 | `ambiente` | Aula, taller, laboratorio u oficina, con `codigo_qr`. |
 | `objeto` / `placa` | Inventario. El QR es la identidad; la placa es atributo opcional. |
 | `objeto_historial` | Creación, traslado, mantenimiento, baja, pérdida. |
-| `sesion_ambiente` | Una fila por sesión diaria: entrada, salida, firma y estado. |
+| `sesion_ambiente` | Una fila por sesión diaria: entrada, salida, firma, aprendices de turno y estado. |
+| `verificacion` | Verificación de inventario por QR: entrada/salida, checklist, 2 aprendices y firma. |
 | `novedad` | Faltante, daño, sobrante o desorden detectado. |
 | `mision_restauracion` / `puntos_ecologicos` | Sanciones ecológicas (traer planta) sin dinero. |
 | `stg_planilla_papel` | Bandeja de digitalización del papel. |
@@ -249,8 +289,8 @@ El esquema completo está en `db/schema.sql`. Todas las fechas se manejan en
 
 ## Limitaciones conocidas de esta fase
 
-- No hay pantalla para que cada usuario cambie su PIN (se hace con `npm run seed` / SQL).
-- No hay recuperación de contraseña por correo.
+- No hay pantalla para que cada usuario cambie su propio PIN; el administrador lo resetea en
+  **Usuarios**. Tampoco hay recuperación de contraseña por correo.
 - La lectura de QR usa la cámara del navegador; en iPhone requiere HTTPS (Vercel ya lo da).
 - Las firmas viven en la base como texto: mantén un respaldo (`pg_dump`) y evita sesiones con
   firmas enormes (el pad ya limita el tamaño).
@@ -293,9 +333,9 @@ npm run hash 4321  # hash bcrypt de un PIN
 
 ## Siguientes pasos sugeridos
 
-1. Pantalla de usuarios y cambio de PIN.
-2. Reportes de horas dictadas por instructor y por ficha.
-3. Exportación de inventario a Excel/PDF.
-4. Check-in/check-out de objetos por QR con el aprendiz.
+1. Reportes de horas dictadas por instructor y por ficha.
+2. Exportación de inventario a Excel/PDF.
+3. Check-in/check-out de objetos por QR con el aprendiz.
+4. Pantalla para que cada usuario cambie su propio PIN.
 5. Misiones ecológicas con evidencia fotográfica.
 6. Biometría (solo con consentimiento y cumplimiento de Ley 1581).

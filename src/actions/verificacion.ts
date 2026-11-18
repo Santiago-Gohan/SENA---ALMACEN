@@ -154,53 +154,75 @@ export async function registrarVerificacion(formData: FormData): Promise<void> {
     const aprendices = `${aprendiz1} / ${aprendiz2}`;
 
     if (momento === 'entrada') {
-      if (!fichaCodigo) throw new Error('Escribe la ficha (7 u 8 dígitos) para abrir la sesión');
-
       const abierta = await sesionAbierta(ambiente.id);
+      let sesionId: number;
+
       if (abierta) {
-        throw new Error(
-          `Ya hay una entrada abierta en este ambiente (${abierta.ficha_codigo ?? 'ficha'} desde ${new Date(
-            abierta.hora_entrada
-          ).toLocaleTimeString('es-CO', { timeZone: 'America/Bogota', hour: '2-digit', minute: '2-digit' })}). Registra primero la salida.`
+        // La sesión pudo abrirla vigilancia en portería: el instructor solo
+        // verifica el inventario de entrada sobre esa misma sesión.
+        const yaVerificada = await uno<any>(
+          `select id from verificacion
+            where sesion_id = $1 and momento = 'entrada'
+            limit 1`,
+          [abierta.id]
         );
+        if (yaVerificada) {
+          throw new Error('La entrada de esta sesión ya fue verificada. Registra la salida.');
+        }
+
+        sesionId = abierta.id;
+
+        await ejecutar(
+          `update sesion_ambiente
+              set aprendices = $2,
+                  firma_url = coalesce(firma_url, $3),
+                  firma_hash = coalesce(firma_hash, $4),
+                  firma_metodo = 'canvas',
+                  updated_at = now()
+            where id = $1`,
+          [sesionId, aprendices, firmaGuardada.url, firmaGuardada.hash]
+        );
+      } else {
+        if (!fichaCodigo) throw new Error('Escribe la ficha (7 u 8 dígitos) para abrir la sesión');
+
+        const ficha = await uno<any>(
+          'select id, codigo, programa_id, activa from ficha where codigo = $1',
+          [fichaCodigo]
+        );
+        if (!ficha) throw new Error(`La ficha ${fichaCodigo} no está registrada`);
+        if (!ficha.activa) throw new Error(`La ficha ${fichaCodigo} está inactiva`);
+        if (!ficha.programa_id) throw new Error('La ficha no tiene programa de formación asignado');
+
+        const instructorId = await personaDelUsuario(usuario);
+
+        const sesion = await uno<any>(
+          `insert into sesion_ambiente
+             (ambiente_id, instructor_id, ficha_id, programa_id,
+              instructor_texto_original, ficha_texto_original, ambiente_texto_original,
+              fecha, hora_entrada, estado, firma_url, firma_hash, firma_metodo,
+              observaciones, origen, aprendices, registrado_por)
+           values ($1, $2, $3, $4, $5, $6, $7, $8, now(), 'abierta', $9, $10, 'canvas',
+                   $11, 'digital', $12, $13)
+           returning id`,
+          [
+            ambiente.id,
+            instructorId,
+            ficha.id,
+            ficha.programa_id,
+            usuario.nombre,
+            fichaCodigo,
+            `${ambiente.codigo} - ${ambiente.nombre}`,
+            hoyISO(),
+            firmaGuardada.url,
+            firmaGuardada.hash,
+            observaciones || null,
+            aprendices,
+            usuario.id,
+          ]
+        );
+        if (!sesion) throw new Error('No se pudo abrir la sesión');
+        sesionId = sesion.id;
       }
-
-      const ficha = await uno<any>(
-        'select id, codigo, programa_id, activa from ficha where codigo = $1',
-        [fichaCodigo]
-      );
-      if (!ficha) throw new Error(`La ficha ${fichaCodigo} no está registrada`);
-      if (!ficha.activa) throw new Error(`La ficha ${fichaCodigo} está inactiva`);
-      if (!ficha.programa_id) throw new Error('La ficha no tiene programa de formación asignado');
-
-      const instructorId = await personaDelUsuario(usuario);
-
-      const sesion = await uno<any>(
-        `insert into sesion_ambiente
-           (ambiente_id, instructor_id, ficha_id, programa_id,
-            instructor_texto_original, ficha_texto_original, ambiente_texto_original,
-            fecha, hora_entrada, estado, firma_url, firma_hash, firma_metodo,
-            observaciones, origen, aprendices, registrado_por)
-         values ($1, $2, $3, $4, $5, $6, $7, $8, now(), 'abierta', $9, $10, 'canvas',
-                 $11, 'digital', $12, $13)
-         returning id`,
-        [
-          ambiente.id,
-          instructorId,
-          ficha.id,
-          ficha.programa_id,
-          usuario.nombre,
-          fichaCodigo,
-          `${ambiente.codigo} - ${ambiente.nombre}`,
-          hoyISO(),
-          firmaGuardada.url,
-          firmaGuardada.hash,
-          observaciones || null,
-          aprendices,
-          usuario.id,
-        ]
-      );
-      if (!sesion) throw new Error('No se pudo abrir la sesión');
 
       await q(
         `insert into verificacion
@@ -208,7 +230,7 @@ export async function registrarVerificacion(formData: FormData): Promise<void> {
             observaciones, firma_url, firma_hash, firma_metodo, registrado_por)
          values ($1, $2, 'entrada', $3, $4::jsonb, $5, $6, $7, $8, 'canvas', $9)`,
         [
-          sesion.id,
+          sesionId,
           ambiente.id,
           todoEnOrden,
           JSON.stringify(detalle),
@@ -220,7 +242,7 @@ export async function registrarVerificacion(formData: FormData): Promise<void> {
         ]
       );
 
-      if (!todoEnOrden) await registrarNovedad(sesion.id, detalle, observaciones, usuario.id);
+      if (!todoEnOrden) await registrarNovedad(sesionId, detalle, observaciones, usuario.id);
 
       await q(
         `insert into auditoria (usuario_id, accion, entidad, entidad_id)

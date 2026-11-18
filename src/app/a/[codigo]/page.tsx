@@ -59,11 +59,19 @@ export default async function AmbienteQRPage({
           [ambiente.id]
         ),
         q<any>(
-          `select v.id, v.momento, v.todo_en_orden, v.detalle, v.aprendices,
+          `select v.id, v.sesion_id, v.momento, v.todo_en_orden, v.detalle, v.aprendices,
                   v.observaciones, v.firma_url, v.created_at
              from verificacion v
             where v.ambiente_id = $1
-              and (v.created_at at time zone 'America/Bogota')::date = $2::date
+              and (
+                (v.created_at at time zone 'America/Bogota')::date = $2::date
+                or v.sesion_id = (
+                  select s.id from sesion_ambiente s
+                   where s.ambiente_id = $1 and s.hora_salida is null
+                   order by s.hora_entrada desc
+                   limit 1
+                )
+              )
             order by v.created_at desc
             limit 12`,
           [ambiente.id, hoyISO()]
@@ -112,6 +120,16 @@ export default async function AmbienteQRPage({
     .map((a: string) => a.trim())
     .filter(Boolean);
 
+  // Si la sesión la abrió vigilancia en portería, el instructor todavía debe
+  // verificar el inventario de entrada. Después de esa verificación, sigue la salida.
+  const entradaVerificada = Boolean(
+    abierta &&
+      verificaciones.some(
+        (v) => v.momento === 'entrada' && String(v.sesion_id) === String(abierta.id)
+      )
+  );
+  const modo: 'entrada' | 'salida' = abierta && entradaVerificada ? 'salida' : 'entrada';
+
   const totalObjetos = objetos.length;
   const novedades = verificaciones.filter((v) => !v.todo_en_orden).length;
 
@@ -153,7 +171,11 @@ export default async function AmbienteQRPage({
           </p>
         </div>
         <span className={abierta ? 'badge info' : 'badge'}>
-          {abierta ? 'Sesión abierta' : 'Sin sesión abierta'}
+          {abierta
+            ? entradaVerificada
+              ? 'Sesión abierta · falta la salida'
+              : 'Sesión abierta · falta verificar entrada'
+            : 'Sin sesión abierta'}
         </span>
       </div>
 
@@ -177,14 +199,16 @@ export default async function AmbienteQRPage({
               <div className="meta">Aprendices de turno: {aprendicesAbiertos.join(' · ')}</div>
             )}
           </div>
-          <span className="badge warn">Falta la salida</span>
+          <span className="badge warn">
+            {entradaVerificada ? 'Falta la salida' : 'Falta verificar entrada'}
+          </span>
         </div>
       )}
 
       <form action={registrarVerificacion} className="card qr-form">
         <input type="hidden" name="ambiente_codigo" value={ambiente.codigo} />
 
-        <h2>{abierta ? 'Verificación de salida' : 'Verificación de entrada'}</h2>
+        <h2>{modo === 'salida' ? 'Verificación de salida' : 'Verificación de entrada'}</h2>
         <p className="muted">
           <small>
             Marca con una ✓ los objetos que están en orden. Si algo falta o está dañado, deja el
@@ -278,13 +302,8 @@ export default async function AmbienteQRPage({
         </div>
 
         <div className="row" style={{ justifyContent: 'flex-end' }}>
-          <button
-            className="btn btn-primary"
-            type="submit"
-            name="momento"
-            value={abierta ? 'salida' : 'entrada'}
-          >
-            {abierta ? 'Registrar salida' : 'Registrar entrada'}
+          <button className="btn btn-primary" type="submit" name="momento" value={modo}>
+            {modo === 'salida' ? 'Registrar salida' : 'Registrar entrada'}
           </button>
         </div>
       </form>
